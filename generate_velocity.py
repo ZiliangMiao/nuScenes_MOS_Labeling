@@ -34,12 +34,6 @@ def generate_scans(nusc: NuScenes, out_dir: str, verbose: bool = False) -> None:
         sample_last = nusc.get('sample', last_scan_tok)
 
 def generate_velocity_files(sample, nusc):
-    """
-    Generate Panoptic nuScenes ground truth labels.
-    :param nusc: NuScenes instance.
-    :param out_dir: output directory.
-    :param verbose: True to print verbose.
-    """
     root_dir = nusc.dataroot
     vels_dir = os.path.join(root_dir, "vels", nusc.version)
     os.makedirs(vels_dir, exist_ok=True)

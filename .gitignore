@@ -1,0 +1,6 @@
+# Data-related
+data/
+mini_data/
+
+# Pycharm-related
+.idea/
