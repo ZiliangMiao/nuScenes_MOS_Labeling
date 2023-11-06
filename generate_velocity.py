@@ -9,7 +9,7 @@ from nuscenes.utils.geometry_utils import points_in_box
 from nuscenes.utils.data_io import load_bin_file
 from nuscenes.utils.data_classes import LidarPointCloud, LidarSegPointCloud
 
-def generate_scans(nusc: NuScenes, out_dir: str, verbose: bool = False) -> None:
+def generate_scans(nusc: NuScenes, verbose: bool = False) -> None:
     if not hasattr(nusc, "lidarseg") or len(getattr(nusc, 'lidarseg')) == 0:
         raise RuntimeError(f"No nuscenes-lidarseg annotations found in {nusc.version}")
     name2idx_mapping = nusc.lidarseg_name2idx_mapping  # idx2name_mapping = nusc.lidarseg_idx2name_mapping
@@ -41,12 +41,15 @@ def generate_velocity_files(sample, nusc):
     lidar_tok = sample['data']['LIDAR_TOP']
     lidar_sd = nusc.get('sample_data', lidar_tok)
     lidar_file = os.path.join(root_dir, lidar_sd['filename'])
+
     points = LidarPointCloud.from_file(lidar_file).points.T  # [num_pts, 4]
     lidarseg_file = os.path.join(root_dir, nusc.get('lidarseg', lidar_tok)['filename'])
     lidarseg_labels = load_bin_file(lidarseg_file, 'lidarseg')  # load lidarseg label
     # lidarseg_pcd = LidarSegPointCloud(lidar_file, lidarseg_file)
 
     vel_labels = np.full(lidarseg_labels.shape[0] * 3, np.nan)  # per-point velocity is initialized to NaN
+    # inconsistent_bbox_label = np.ones(lidarseg_labels.shape[0], dtype=np.uint8)  # 1: consistent, 0: inconsistent
+    # inside_bbox_label = np.zeros(lidarseg_labels.shape[0], dtype=np.uint8)  # 1: inside bbox, 0: outside bbox
 
     num_boxes = len(sample['anns'])
     num_inconsistent_boxes = 0
@@ -71,6 +74,7 @@ def generate_velocity_files(sample, nusc):
         for idx in pts_indices:
             point_label = lidarseg_labels[idx]
             box_label = name2idx_mapping[ann['category_name']]
+            # inside_bbox_label[idx] = 1  # pts inside bbox
             if point_label == box_label:
                 vel_x = box_vel[0]
                 vel_y = box_vel[1]
@@ -84,19 +88,28 @@ def generate_velocity_files(sample, nusc):
                     vel_labels[idx * 3 + 1] = vel_y
                     vel_labels[idx * 3 + 2] = vel_z
             else:
+                # inconsistent_bbox_label[idx] = 0  # inconsistent bbox label
                 num_inconsistent_pts += 1
     vel_file = os.path.join(vels_dir, lidar_tok + "_vel.bin")
     vel_labels.tofile(vel_file)
-    # vels_loaded = np.fromfile(vel_file, dtype=np.float64).reshape(-1, 3)
+
+    # other checks
+    # inconsistent_bbox_dir = os.path.join(root_dir, "inconsistent_bbox", nusc.version)
+    # inside_bbox_dir = os.path.join(root_dir, "inside_bbox", nusc.version)
+    # os.makedirs(inconsistent_bbox_dir, exist_ok=True)
+    # os.makedirs(inside_bbox_dir, exist_ok=True)
+    # inconsistent_bbox_label_file = os.path.join(inconsistent_bbox_dir, lidar_tok + "_inconsistent.bin")
+    # inside_bbox_label_file = os.path.join(inside_bbox_dir, lidar_tok + "_inside.bin")
+    # inconsistent_bbox_label.tofile(inconsistent_bbox_label_file)
+    # inside_bbox_label.tofile(inside_bbox_label_file)
     return num_inconsistent_boxes, num_boxes
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate nuScenes lidar panaptic gt.')
-    parser.add_argument('--root_dir', type=str, default='/home/mars/catkin_ws/src/nuscenes2bag/mini_data',
+    parser.add_argument('--root_dir', type=str, default='/home/mars/MOS_Projects/nuScenes_MOS_Labeling/data',
                         help='Default nuScenes data directory.')
-    parser.add_argument('--version', type=str, default='v1.0-mini')
+    parser.add_argument('--version', type=str, default='v1.0-trainval')
     parser.add_argument('--verbose', type=bool, default=True, help='Whether to print to stdout.')
-    parser.add_argument('--out_dir', type=str, default='/home/mars/catkin_ws/src/nuscenes2bag/mini_data/vels')
     args = parser.parse_args()
 
     print(f'Start velocity ground truths generation... \nArguments: {args}')
@@ -107,15 +120,14 @@ if __name__ == '__main__':
     num_samples = len(nusc.sample)
     print(f'There are {num_samples} samples.')
 
-    total_num_inconsistent_boxes = 0
-    total_num_boxes = 0
+
+    scenes = nusc.scene
+
     for sample in tqdm(nusc.sample):
         num_inconsistent_boxes, num_boxes = generate_velocity_files(sample, nusc)
-        total_num_inconsistent_boxes += num_inconsistent_boxes
-        total_num_boxes += num_boxes
 
-    print(str(total_num_inconsistent_boxes) + " inconsistent boxes out of " + str(total_num_boxes) + " boxes")
-    print(f'Velocity ground truths saved at {args.out_dir}. \nFinished velocity ground truth generation.')
+    # print(str(total_num_inconsistent_boxes) + " inconsistent boxes out of " + str(total_num_boxes) + " boxes")
+    print("Finished velocity ground truth generation.")
 
 
 

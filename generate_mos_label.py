@@ -73,11 +73,11 @@ def generate_mos_labels(sample, nusc):
     num_mov_mov = 0  # movable objects: moving -> 2
     num_mov_sta = 0  # movable objects: static -> 1
 
+    veh_velo_thr_lb = 0.2  # vehicle velocity threshold lower bound
+    veh_velo_thr_ub = 0.6  # vehicle velocity threshold upper bound
+    hum_velo_thr_lb = 0.10  # human velocity threshold lower bound
+    hum_velo_thr_ub = 0.35  # human velocity threshold upper bound
 
-
-    # read ego pose, and calculate ego velocity
-    ego_velo_thr = 0.3333
-    velo_thr = 0.3333
     # 0: unknown; 1: static; 2: moving
     for pt_idx in range(num_pts):
         vel_x = vels_label[pt_idx][0]
@@ -90,28 +90,40 @@ def generate_mos_labels(sample, nusc):
 
         lidarseg_label = lidarseg_labels[pt_idx]
         if lidarseg_label == 31:  # vehicle.ego
-            if ego_velo > ego_velo_thr:
-                mos_label[pt_idx] = 2
+            if ego_velo > veh_velo_thr_ub:
+                mos_label[pt_idx] = 2  # moving
+            elif ego_velo < veh_velo_thr_ub:
+                mos_label[pt_idx] = 1  # static
             else:
-                mos_label[pt_idx] = 1
+                mos_label[pt_idx] = 0  # unknown
         elif lidarseg_label in [30, 29, 28, 27, 26, 25, 24, 13]:
             # static.vegetation, static.other, static.manmade
             # flat.driveable_surface, flat.terrain, flat.sidewalk, flat.other
             # static_object.bicycle_rack
             if math.isnan(vel):  # for the static object, the velocity is NaN -> no bbox -> mos = 1
-                mos_label[pt_idx] = 1
-            elif vel > velo_thr:
-                mos_label[pt_idx] = 0 # lidarseg label is not correct, or the velocity calculation is not correct
+                mos_label[pt_idx] = 1  # static
+            elif vel > hum_velo_thr_lb:  # human velocity lower bound
+                mos_label[pt_idx] = 0  # lidarseg label is not correct, or the velocity calculation is not correct
             else:
                 mos_label[pt_idx] = 1
-        elif lidarseg_label in [23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]:
-            # vehicle, movable_object, human, animal
+        elif lidarseg_label in [23, 22, 21, 20, 19, 18, 17, 16, 15, 14]:  # movable vehicle
             if math.isnan(vel):
                 mos_label[pt_idx] = 0  # movable class, no velocity -> unknown
-            elif vel > velo_thr:
-                mos_label[pt_idx] = 2
+            elif vel > veh_velo_thr_ub:
+                mos_label[pt_idx] = 2  # moving
+            elif vel < veh_velo_thr_lb:
+                mos_label[pt_idx] = 1  # static
             else:
-                mos_label[pt_idx] = 1
+                mos_label[pt_idx] = 0  # unknown, between vehicle threshold upper and lower bound
+        elif lidarseg_label in [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]:  # movable human or object
+            if math.isnan(vel):
+                mos_label[pt_idx] = 0  # movable class, no velocity -> unknown
+            elif vel > hum_velo_thr_ub:
+                mos_label[pt_idx] = 2  # moving
+            elif vel < hum_velo_thr_lb:
+                mos_label[pt_idx] = 1  # static
+            else:
+                mos_label[pt_idx] = 0  # unknown, between human threshold upper and lower bound
         elif lidarseg_label == 0:  # noise
             mos_label[pt_idx] = 0
         else:
@@ -120,11 +132,9 @@ def generate_mos_labels(sample, nusc):
     mos_label.tofile(mos_file)
     # mos_loaded = np.fromfile(mos_file, dtype=np.uint8)
 
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate nuScenes lidar panaptic gt.')
-    parser.add_argument('--root_dir', type=str, default='/home/mars/catkin_ws/src/nuscenes2bag/data',
+    parser.add_argument('--root_dir', type=str, default='/home/mars/MOS_Projects/nuScenes_MOS_Labeling/data',
                         help='Default nuScenes data directory.')
     parser.add_argument('--version', type=str, default='v1.0-trainval')
     parser.add_argument('--verbose', type=bool, default=True, help='Whether to print to stdout.')
@@ -141,7 +151,7 @@ if __name__ == '__main__':
     for sample in tqdm(nusc.sample):
         generate_mos_labels(sample, nusc)
 
-
+    # no enough memory
     # multi-processing
     # pool = multiprocessing.Pool(processes=64)
     # for sample in tqdm(nusc.sample):

@@ -15,6 +15,7 @@ from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.geometry_utils import points_in_box
 from nuscenes.utils.data_io import load_bin_file
 from nuscenes.utils.data_classes import LidarPointCloud, LidarSegPointCloud
+from nuscenes.utils.splits import create_splits_logs
 
 classname_to_color = {  # RGB.
         "noise": (255, 255, 255),  # White: noise
@@ -60,6 +61,11 @@ mos_colormap = {
         0: (255/255, 255/255, 255/255),  # unknown: white
         1: (25/255, 80/255, 25/255),    # static: green
         2: (255/255, 20/255, 20/255)     # moving: red
+    }
+
+check_colormap = {
+        0: (255/255, 20/255, 20/255),     # moving: red
+        1: (255/255, 255/255, 255/255),  # unknown: white
     }
 
 lidarseg_colormap = {  # RGB.
@@ -183,11 +189,32 @@ def draw_box(vis, boxes):
         vis.add_geometry(line_set)
     return vis
 
-def render_samples(nusc, show_mos=True, show_lidarseg=False):
-    if show_mos:
+def render_samples(nusc, sample_tokens, show_mos_gt=True, show_mos_pred=False, show_lidarseg=False, show_inconsistent=False, show_inside=False):
+    if show_mos_gt:
+        show_mos_pred = False
         show_lidarseg = False
-    else:
-        show_lidarseg = True
+        show_inconsistent = False
+        show_inside = False
+    elif show_mos_pred:
+        show_mos_gt = False
+        show_lidarseg = False
+        show_inconsistent = False
+        show_inside = False
+    elif show_lidarseg:
+        show_mos_gt = False
+        show_mos_pred = False
+        show_inconsistent = False
+        show_inside = False
+    elif show_inside:
+        show_mos_gt = False
+        show_mos_pred = False
+        show_lidarseg = False
+        show_inconsistent = False
+    elif show_inconsistent:
+        show_mos_gt = False
+        show_mos_pred = False
+        show_lidarseg = False
+        show_inside = False
 
     sample_idx = 0
     vis = open3d.visualization.VisualizerWithKeyCallback()
@@ -199,7 +226,8 @@ def render_samples(nusc, show_mos=True, show_lidarseg=False):
         vis.clear_geometries()
 
         # get points and bboxes
-        sample = nusc.sample[sample_idx]
+        sample_token = sample_tokens[sample_idx]
+        sample = nusc.get("sample", sample_token)
         lidar_tok = sample['data']['LIDAR_TOP']
         lidar_data = nusc.get('sample_data', lidar_tok)
         pcl_path = os.path.join(nusc.dataroot, lidar_data['filename'])
@@ -208,14 +236,23 @@ def render_samples(nusc, show_mos=True, show_lidarseg=False):
         for ann_token in sample['anns']:  # bbox
             _, box, _ = nusc.get_sample_data(lidar_tok, selected_anntokens=[ann_token], use_flat_vehicle_coordinates=False)
             boxes.append(box)
-        # get mos labels or lidarseg labels:
-        if show_mos:
-            mos_labels_file = os.path.join(nusc.dataroot, 'mos_labels', nusc.version,
-                                               lidar_tok + "_mos.label")
+        # get mos, lidarseg, inconsistent_bbox or inside_bbox labels:
+        points_label = None
+        if show_mos_gt:
+            mos_labels_file = os.path.join(nusc.dataroot, 'mos_labels', nusc.version, lidar_tok + "_mos.label")
             points_label = np.fromfile(mos_labels_file, dtype=np.uint8)
-        else:
+        elif show_mos_pred:
+            mos_labels_file = os.path.join(nusc.dataroot, '4dmos_sekitti_pred', nusc.version, lidar_tok + "_mos_pred.label")
+            points_label = np.fromfile(mos_labels_file, dtype=np.uint8)
+        elif show_lidarseg:
             lidarseg_file = os.path.join(nusc.dataroot, nusc.get('lidarseg', lidar_tok)['filename'])
             points_label = np.fromfile(lidarseg_file, dtype=np.uint8)
+        elif show_inconsistent:
+            inconsistent_file = os.path.join(nusc.dataroot, 'inconsistent_bbox', nusc.version, lidar_tok + "_inconsistent.bin")
+            points_label = np.fromfile(inconsistent_file, dtype=np.uint8)
+        elif show_inside:
+            inside_file = os.path.join(nusc.dataroot, 'inside_bbox', nusc.version, lidar_tok + "_inside.bin")
+            points_label = np.fromfile(inside_file, dtype=np.uint8)
 
         # draw origin
         axis_pcd = open3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
@@ -227,8 +264,15 @@ def render_samples(nusc, show_mos=True, show_lidarseg=False):
         vis.add_geometry(pts)
 
         # draw points label
-        if show_mos:
+        if show_mos_gt or show_mos_pred:
             vfunc = np.vectorize(mos_colormap.get)
+            points_color = np.array(vfunc(points_label)).T
+        elif show_inconsistent:
+            vfunc = np.vectorize(check_colormap.get)
+            points_color = np.array(vfunc(points_label)).T
+            a = 1
+        elif show_inside:
+            vfunc = np.vectorize(check_colormap.get)
             points_color = np.array(vfunc(points_label)).T
         else:
             vfunc = np.vectorize(lidarseg_colormap.get)
@@ -256,8 +300,8 @@ def render_samples(nusc, show_mos=True, show_lidarseg=False):
     def render_next(vis):
         nonlocal sample_idx
         sample_idx += 1
-        if sample_idx >= len(nusc.sample):
-            sample_idx = len(nusc.sample) - 1
+        if sample_idx >= len(sample_tokens):
+            sample_idx = len(sample_tokens) - 1
         draw_sample(vis)
 
     def render_prev(vis):
@@ -272,10 +316,23 @@ def render_samples(nusc, show_mos=True, show_lidarseg=False):
     vis.register_key_callback(ord('A'), render_prev)
     vis.run()
 
+def split_to_samples(nusc, split_logs):
+    sample_tokens = []  # store the sample tokens
+    sample_data_tokens = []
+    for sample in nusc.sample:
+        sample_data_token = sample['data']['LIDAR_TOP']
+        scene = nusc.get('scene', sample['scene_token'])
+        log = nusc.get('log', scene['log_token'])
+        logfile = log['logfile']
+        if logfile in split_logs:
+            sample_data_tokens.append(sample_data_token)
+            sample_tokens.append(sample['token'])
+    return sample_tokens, sample_data_tokens
+
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Generate nuScenes lidar panaptic gt.')    
-    parser.add_argument('--root_dir', type=str, default='/home/mars/catkin_ws/src/nuscenes2bag/data',
+    parser = argparse.ArgumentParser(description='Generate nuScenes lidar panaptic gt.')
+    parser.add_argument('--root_dir', type=str, default='/home/mars/MOS_Projects/nuScenes_MOS_Labeling/data',
                         help='Default nuScenes data directory.')
     parser.add_argument('--version', type=str, default='v1.0-trainval')
     parser.add_argument('--verbose', type=bool, default=True, help='Whether to print to stdout.')
@@ -287,5 +344,11 @@ if __name__ == '__main__':
         raise RuntimeError(f"No nuscenes-lidarseg annotations found in {nusc.version}")
 
     warnings.filterwarnings("ignore")
-    render_samples(nusc, show_mos=False)
+
+    # split train, val, test samples
+    split = "val"
+    split_logs = create_splits_logs(split, nusc)
+    sample_tokens, sample_data_tokens = split_to_samples(nusc, split_logs)
+
+    render_samples(nusc, sample_tokens, show_mos_gt=False, show_mos_pred=True, show_inconsistent=False, show_inside=False)
     print(f'Finished rendering.')
