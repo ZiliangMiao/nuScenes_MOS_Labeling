@@ -137,8 +137,6 @@ if __name__ == '__main__':
             # # scan_points = np.concatenate(points, axis=0)  # register all points of five lidars
             # top_lidar_points = points[0]
 
-
-
             scenario_idx = scenario.scenario_id
             timestamps_seconds = list(scenario.timestamps_seconds)
             current_time_idx = scenario.current_time_index  # index of current timestamp in timestamps_seconds
