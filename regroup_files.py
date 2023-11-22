@@ -21,6 +21,12 @@ import numpy as np
     help="output directory",
     default="/home/mars/catkin_ws/src/nuscenes2bag/mini_data/sequences",
 )
+# seq-01
+## frame-000000.color.png; frame-000000.depth.png; frame-000000.height.png; frame-000000.lidar-intrinsics.txt; frame-000000.pose.txt
+# camera_intrinsics.txt
+
+
+
 def main(root_dir, out_dir):
     scenes = []
     for root, dirs, files in os.walk(root_dir, topdown=True):

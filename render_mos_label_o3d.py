@@ -270,7 +270,6 @@ def render_samples(nusc, sample_tokens, show_mos_gt=True, show_mos_pred=False, s
         elif show_inconsistent:
             vfunc = np.vectorize(check_colormap.get)
             points_color = np.array(vfunc(points_label)).T
-            a = 1
         elif show_inside:
             vfunc = np.vectorize(check_colormap.get)
             points_color = np.array(vfunc(points_label)).T
