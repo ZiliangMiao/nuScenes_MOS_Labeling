@@ -1,3 +1,4 @@
+import json
 import multiprocessing
 import os
 import os.path
@@ -178,12 +179,12 @@ def open3d_vis_esdf_mos(esdf, sample_data_token, nusc):
     esdf_points = esdf[:, :3]
     esdf_dis = esdf[:, -1]
 
-    esdf_dis = transfer_to_colormap_key(esdf_dis)
+    esdf_dis, valid_color_idx = transfer_to_colormap_key(esdf_dis)
     color_func = np.vectorize(coolwarm_colormap.get)
     esdf_color = np.array(color_func(esdf_dis)).T
 
     # point cloud with mos label
-    points_w = get_pcl_in_world_frame(nusc, sample_data_token)
+    points_w, valid_points_idx = get_pcl_in_world_frame(nusc, sample_data_token)
     points_color = np.full_like(points_w, 0.3)
 
     pts = o3d.geometry.PointCloud()
@@ -298,7 +299,7 @@ def open3d_vis_esdf_res_mos(esdf_res, sample_data_token, nusc):
     print('Displaying voxel grid ...')
     voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_pcd, voxel_size=o3d_voxel_size)
 
-    points_w = get_pcl_in_world_frame(nusc, sample_data_token)
+    points_w, valid_points_idx = get_pcl_in_world_frame(nusc, sample_data_token)
 
     # esdf residual: next - curr
     # mos label: next
@@ -343,6 +344,7 @@ def open3d_vis_esdf_res_mos(esdf_res, sample_data_token, nusc):
 
 def transfer_to_colormap_key(res):
     nan_idx = np.argwhere(np.isnan(res))
+    valid_color_idx = np.squeeze(np.argwhere(np.invert(np.isnan(res))))
     neg_6_idx = np.argwhere(res <= -1.00)  # (-infinite, -1.00] m
     neg_5_idx = np.argwhere((-1.00 < res) & (res <= -0.50))  # (-1.00, -0.50] m
     neg_4_idx = np.argwhere((-0.50 < res) & (res <= -0.20))  # (-0.50, -0.20] m
@@ -371,13 +373,17 @@ def transfer_to_colormap_key(res):
     res[pos_4_idx] = 4
     res[pos_5_idx] = 5
     res[pos_6_idx] = 6
-    return res
+    return res, valid_color_idx
 
 def get_pcl_in_world_frame(nusc, sample_data_token):
     sample_data = nusc.get('sample_data', sample_data_token)
     pcl_path = os.path.join(nusc.dataroot, sample_data['filename'])
     points_l = LidarPointCloud.from_file(pcl_path).points.T  # [num_points, 4]
     points_l = points_l[:, :3]  # without intensity
+
+    # filter points with distance > max distacne
+    valid_points_idx = filter_far_points(points_l)
+    # points_l = points_l[valid_points_idx]
 
     # odom pose: from vehicle to world
     pose_token = sample_data['ego_pose_token']
@@ -393,14 +399,23 @@ def get_pcl_in_world_frame(nusc, sample_data_token):
     T_l_2_w = T_v_2_w @ T_l_2_v
     points_l_homo = np.hstack([points_l, np.ones((points_l.shape[0], 1))]).T
     points_w = (T_l_2_w @ points_l_homo).T[:, :3]
-    return points_w
+    return points_w, valid_points_idx
+
+def filter_far_points(points):
+    max_dis = 35
+    x = points[:, 0]
+    y = points[:, 1]
+    z = points[:, 2]
+    points_dist = np.sqrt(np.square(x) + np.square(y) + np.square(z))
+    valid_points_idx = np.squeeze(np.argwhere(points_dist <= max_dis))
+    return valid_points_idx
 
 # current esdf residual, and next mos point cloud
 def open3d_vis_esdf_res_curr_mos_next(esdf_res, sample_data_token, nusc):
     res = esdf_res[:, -1]
 
     # process the newly observed voxels (np.nan)
-    res = transfer_to_colormap_key(res)
+    res, valid_color_idx = transfer_to_colormap_key(res)
 
     color_func = np.vectorize(coolwarm_colormap.get)
     esdf_res_color = np.array(color_func(res)).T
@@ -409,7 +424,6 @@ def open3d_vis_esdf_res_curr_mos_next(esdf_res, sample_data_token, nusc):
     esdf_pcd.points = o3d.utility.Vector3dVector(esdf_res[:, :3])
     esdf_pcd.colors = o3d.utility.Vector3dVector(esdf_res_color)
 
-    print('Displaying voxel grid ...')
     voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_pcd, voxel_size=o3d_voxel_size)
 
     # point cloud colored by mos label
@@ -423,8 +437,8 @@ def open3d_vis_esdf_res_curr_mos_next(esdf_res, sample_data_token, nusc):
         sample_data_next_keyframe = nusc.get('sample_data', sample_data_next_keyframe['next'])
 
     # get points of keyframes (world frame)
-    points_kf = get_pcl_in_world_frame(nusc, sample_data_keyframe['token'])
-    points_next_kf = get_pcl_in_world_frame(nusc, sample_data_next_keyframe['token'])
+    points_kf, valid_pts_idx = get_pcl_in_world_frame(nusc, sample_data_keyframe['token'])
+    points_next_kf, valid_pts_idx_next = get_pcl_in_world_frame(nusc, sample_data_next_keyframe['token'])
 
     # load mos labels
     mos_labels_kf_file = os.path.join(nusc.dataroot, 'mos_labels', nusc.version, sample_data_keyframe['token'] + "_mos.label")
@@ -440,8 +454,8 @@ def open3d_vis_esdf_res_curr_mos_next(esdf_res, sample_data_token, nusc):
     # vfunc = np.vectorize(mos_colormap.get)
     # points_color_kf = np.array(vfunc(points_label_kf[mov_idx_kf])).T
     # points_color_next_kf = np.array(vfunc(points_label_next_kf[mov_idx_next_kf])).T
-    points_color_kf = np.full_like(points_kf[mov_idx_kf], 0.0)  # keyframe
-    points_color_next_kf = np.full_like(points_next_kf[mov_idx_next_kf], 0.6)  # next keyframe
+    points_color_kf = np.full_like(points_kf[mov_idx_kf], 0.6)  # keyframe
+    points_color_next_kf = np.full_like(points_next_kf[mov_idx_next_kf], 0.0)  # next keyframe
 
     # open3d geometries (point cloud)
     o3d_pcd_kf = o3d.geometry.PointCloud()
@@ -476,6 +490,93 @@ def open3d_vis_esdf_res_curr_mos_next(esdf_res, sample_data_token, nusc):
     vis.run()
     vis.destroy_window()
 
+def open3d_vis_esdf_res_keyframes(esdf_res, keyframe_curr_tok, nusc):
+    # esdf res -> open3d voxel grid
+    res = esdf_res[:, -1]
+    res_color_keys, valid_color_idx = transfer_to_colormap_key(res)
+    color_func = np.vectorize(coolwarm_colormap.get)
+    esdf_res_color = np.array(color_func(res_color_keys)).T[valid_color_idx]
+
+    esdf_pcd = o3d.geometry.PointCloud()
+    esdf_pcd.points = o3d.utility.Vector3dVector(esdf_res[:, :3][valid_color_idx])
+    esdf_pcd.colors = o3d.utility.Vector3dVector(esdf_res_color)
+    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_pcd, voxel_size=o3d_voxel_size)
+
+    # point cloud colored by mos label
+    keyframe_token_list = list(sdt_2_idx_dict.keys())
+    keyframe_curr = nusc.get('sample_data', keyframe_curr_tok)
+    assert keyframe_curr['is_key_frame'], "current sample data is not keyframe, cannot vis keyframes"
+    keyframe_list_idx = keyframe_token_list.index(keyframe_curr_tok)
+    keyframe_prev_tok = keyframe_token_list[keyframe_list_idx - 1]
+    keyframe_next_tok = keyframe_token_list[keyframe_list_idx + 1]
+
+    # get points of keyframes (world frame)
+    points_kf_prev, valid_pts_idx_prev = get_pcl_in_world_frame(nusc, keyframe_prev_tok)
+    points_kf_curr, valid_pts_idx_curr = get_pcl_in_world_frame(nusc, keyframe_curr_tok)
+    points_kf_next, valid_pts_idx_next = get_pcl_in_world_frame(nusc, keyframe_next_tok)
+
+    # load mos labels
+    mos_labels_kf_prev_file = os.path.join(nusc.dataroot, 'mos_labels', nusc.version, keyframe_prev_tok + "_mos.label")
+    mos_labels_kf_curr_file = os.path.join(nusc.dataroot, 'mos_labels', nusc.version, keyframe_curr_tok + "_mos.label")
+    mos_labels_kf_next_file = os.path.join(nusc.dataroot, 'mos_labels', nusc.version, keyframe_next_tok + "_mos.label")
+    points_label_kf_prev = np.fromfile(mos_labels_kf_prev_file, dtype=np.uint8)[valid_pts_idx_prev]
+    points_label_kf_curr = np.fromfile(mos_labels_kf_curr_file, dtype=np.uint8)[valid_pts_idx_curr]
+    points_label_kf_next = np.fromfile(mos_labels_kf_next_file, dtype=np.uint8)[valid_pts_idx_next]
+
+    # only vis moving points
+    mov_idx_kf_prev = np.squeeze(np.argwhere(points_label_kf_prev == 2))
+    mov_idx_kf_curr = np.squeeze(np.argwhere(points_label_kf_curr == 2))
+    mov_idx_kf_next = np.squeeze(np.argwhere(points_label_kf_next == 2))
+
+    # points color
+    kf_prev_colormap = {
+        # 2: (0.576, 0.878, 0.463)
+        2: (0.6, 0.6, 0.6)
+    }
+    kf_curr_colormap = {
+        # 2: (0.369, 0.71, 0.239)
+        2: (0.3, 0.3, 0.3)
+    }
+    kf_next_colormap = {
+        # 2: (0.114, 0.38, 0.012)
+        2: (0.0, 0.0, 0.0)
+    }
+    prev_color_value_func = np.vectorize(kf_prev_colormap.get)
+    curr_color_value_func = np.vectorize(kf_curr_colormap.get)
+    next_color_value_func = np.vectorize(kf_next_colormap.get)
+    points_color_kf_prev = np.array(prev_color_value_func(points_label_kf_prev[mov_idx_kf_prev])).T
+    points_color_kf_curr = np.array(curr_color_value_func(points_label_kf_curr[mov_idx_kf_curr])).T
+    points_color_kf_next = np.array(next_color_value_func(points_label_kf_next[mov_idx_kf_next])).T
+
+    # open3d geometries (point cloud)
+    o3d_pcd_kf_prev = o3d.geometry.PointCloud()
+    o3d_pcd_kf_prev.points = o3d.utility.Vector3dVector(points_kf_prev[mov_idx_kf_prev])
+    o3d_pcd_kf_prev.colors = o3d.utility.Vector3dVector(points_color_kf_prev)
+    o3d_pcd_kf_curr = o3d.geometry.PointCloud()
+    o3d_pcd_kf_curr.points = o3d.utility.Vector3dVector(points_kf_curr[mov_idx_kf_curr])
+    o3d_pcd_kf_curr.colors = o3d.utility.Vector3dVector(points_color_kf_curr)
+    o3d_pcd_kf_next = o3d.geometry.PointCloud()
+    o3d_pcd_kf_next.points = o3d.utility.Vector3dVector(points_kf_next[mov_idx_kf_next])
+    o3d_pcd_kf_next.colors = o3d.utility.Vector3dVector(points_color_kf_next)
+
+    # open3d visualizer
+    vis = o3d.visualization.Visualizer()
+    vis.create_window()
+    vis.add_geometry(voxel_grid)
+    vis.add_geometry(o3d_pcd_kf_prev)
+    vis.add_geometry(o3d_pcd_kf_curr)
+    vis.add_geometry(o3d_pcd_kf_next)
+
+    # open3d render options
+    opt = vis.get_render_option()
+    opt.point_size = o3d_point_size
+    opt.background_color = np.asarray(o3d_background_color)
+    # open3d view control
+    ctrl = vis.get_view_control()
+
+    vis.run()
+    vis.destroy_window()
+
 def esdf_histogram(esdf):
     esdf_dis = esdf[:, -1].reshape((-1, 1))
     # n, bins, patches = plt.hist(x=esdf_dis, bins='auto', color='#0504aa', alpha=0.7, rwidth=0.85)
@@ -506,8 +607,8 @@ def open3d_compare_resolution(esdf_1, esdf_2):
 
     # get esdf color
     color_func = np.vectorize(coolwarm_colormap.get)
-    esdf_1_colors_key = transfer_to_colormap_key(esdf_1_dis)
-    esdf_2_colors_key = transfer_to_colormap_key(esdf_2_dis)
+    esdf_1_colors_key, valid_color_idx_1 = transfer_to_colormap_key(esdf_1_dis)
+    esdf_2_colors_key, valid_color_idx_2 = transfer_to_colormap_key(esdf_2_dis)
     esdf_1_colors = np.array(color_func(esdf_1_colors_key)).T
     esdf_2_colors = np.array(color_func(esdf_2_colors_key)).T
 
@@ -519,8 +620,8 @@ def open3d_compare_resolution(esdf_1, esdf_2):
     esdf_2_pcd.points = o3d.utility.Vector3dVector(esdf_2_points)
     esdf_2_pcd.colors = o3d.utility.Vector3dVector(esdf_2_colors)
 
-    esdf_1_voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_1_pcd, voxel_size=0.1)
-    esdf_2_voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_2_pcd, voxel_size=0.2)
+    esdf_1_voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_1_pcd, voxel_size=0.2)
+    esdf_2_voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_2_pcd, voxel_size=0.5)
 
     vis_1 = o3d.visualization.Visualizer()  # visualizer
     vis_1.create_window()
@@ -544,11 +645,10 @@ def open3d_compare_resolution(esdf_1, esdf_2):
 if __name__ == '__main__':
     # Switch
     run_kitti = False
-    vis_esdf = False
-    vis_esdf_res = False
     vis_esdf_histogram = False
-    vis_mos_label = False
-    vis_compare_resolution = True
+    vis_esdf = False
+    vis_esdf_res = True
+    vis_compare_resolution = False
 
     # args
     parser = argparse.ArgumentParser(description='Generate nuScenes lidar panaptic gt.')
@@ -557,12 +657,25 @@ if __name__ == '__main__':
     parser.add_argument('--verbose', type=bool, default=True, help='Whether to print to stdout.')
     args = parser.parse_args()
 
+    if vis_esdf or vis_esdf_res or vis_compare_resolution:
+        nusc = NuScenes(version=args.version, dataroot=args.root_dir, verbose=args.verbose)
+    else:
+        nusc = None
+
     # Path
     seq_idx = 0
     frame_idx = 9
-    sample_data_token = idx_2_sdt_dict[(seq_idx, frame_idx)]
     esdf_dir = "/home/mars/MOS_Projects/nvblox_datasets/nusc/esdf"
     esdf_res_dir = "/home/mars/MOS_Projects/nvblox_datasets/nusc/esdf_res"
+
+    # load keyframe dict
+    dict_dir = "/home/mars/MOS_Projects/nvblox_datasets/nusc/dict"
+    dict_file = os.path.join(dict_dir, "seq-" + str(seq_idx).zfill(4) + ".dict.txt")
+    with open(dict_file, "r") as fp:
+        keyframes_dict = json.load(fp)
+    keyframes_dict_inv = {(v[0], v[1]): k for k, v in keyframes_dict.items()}
+
+    sample_data_token = idx_2_sdt_dict[(seq_idx, frame_idx)]
 
     # Shell script
     if run_kitti:
@@ -576,8 +689,8 @@ if __name__ == '__main__':
     # 1                         |     10                    |    1086 / 1098                                |   40 / 40
 
     if vis_compare_resolution:
-        esdf_1 = read_esdf(os.path.join(esdf_dir, "seq-" + str(seq_idx).zfill(4), "resolution-0.1", "frame-" + str(frame_idx).zfill(6) + ".esdf_next.ply"))
-        esdf_2 = read_esdf(os.path.join(esdf_dir, "seq-" + str(seq_idx).zfill(4), "resolution-0.2", "frame-" + str(frame_idx).zfill(6) + ".esdf_next.ply"))
+        esdf_1 = read_esdf(os.path.join(esdf_dir, "seq-" + str(seq_idx).zfill(4), "resolution-0.2", "frame-" + str(frame_idx).zfill(6) + ".esdf_next.ply"))
+        esdf_2 = read_esdf(os.path.join(esdf_dir, "seq-" + str(seq_idx).zfill(4), "resolution-0.5", "frame-" + str(frame_idx).zfill(6) + ".esdf_next.ply"))
         open3d_compare_resolution(esdf_1, esdf_2)
 
     try:  # load stored esdf residual file
@@ -587,18 +700,17 @@ if __name__ == '__main__':
         if vis_esdf_histogram:
             esdf_histogram(esdf_residual)
         if vis_esdf_res:
-            nusc = NuScenes(version=args.version, dataroot=args.root_dir, verbose=args.verbose)
             # open3d_vis_esdf_res_mos(esdf_residual, sample_data_token, nusc)
             open3d_vis_esdf_res_curr_mos_next(esdf_residual, sample_data_token, nusc)
-
+            # open3d_vis_esdf_res_keyframes(esdf_residual, sample_data_token, nusc)
         # not_nan_idx = np.argwhere(np.invert(np.isnan(esdf_residual[:, -1])))
         # residual = esdf_residual[not_nan_idx, -1]
+
     except IOError:
         print("No ESDF residual file or directory! Start computing ESDF residual:")
         esdf_next = read_esdf(os.path.join(esdf_dir, "seq-" + str(seq_idx).zfill(4), "resolution-" + str(o3d_voxel_size), "frame-" + str(frame_idx).zfill(6) + ".esdf_next.ply"))
         esdf_curr = read_esdf(os.path.join(esdf_dir, "seq-" + str(seq_idx).zfill(4), "resolution-" + str(o3d_voxel_size), "frame-" + str(frame_idx).zfill(6) + ".esdf_curr.ply"))
         if vis_esdf:
-            nusc = NuScenes(version=args.version, dataroot=args.root_dir, verbose=args.verbose)
             open3d_vis_esdf_mos(esdf_curr, sample_data_token, nusc)
         if vis_esdf_histogram:
             esdf_histogram(esdf_curr)
@@ -628,7 +740,6 @@ if __name__ == '__main__':
         print("Save ESDF Residual to .bin file: ")
 
         if vis_esdf_res:
-            nusc = NuScenes(version=args.version, dataroot=args.root_dir, verbose=args.verbose)
             # open3d_vis_esdf_res_mos(esdf_residual, sample_data_token, nusc)
-            open3d_vis_esdf_res_curr_mos_next(esdf_residual, sample_data_token, nusc)
-
+            # open3d_vis_esdf_res_curr_mos_next(esdf_residual, sample_data_token, nusc)
+            open3d_vis_esdf_res_keyframes(esdf_residual, sample_data_token, nusc)

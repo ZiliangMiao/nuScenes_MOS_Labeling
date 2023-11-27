@@ -1,7 +1,7 @@
 import os
 import math
 from multiprocessing.managers import BaseManager
-
+import json
 import cv2
 import argparse
 import numpy as np
@@ -114,6 +114,32 @@ def store_image(root_dir, sample_data, lidar_intrinsics, depth_img, height_img):
     cv2.imwrite(depth_img, depth_mat)
     cv2.imwrite(height_img, height_mat)
 
+def store_sdt_to_idx_dict(scene_idx, scene, nusc):
+    seq_idx = scene_idx
+    frame_idx = 0
+    sdt_2_idx_dict = {}  # sample data token -> {seq_idx, frame_idx}, only store keyframes
+
+    sample = nusc.get('sample', scene['first_sample_token'])
+    sample_data_tok = sample['data']['LIDAR_TOP']
+    sample_data = nusc.get('sample_data', sample_data_tok)
+
+    sdt_2_idx_dict[sample_data_tok] = (seq_idx, frame_idx)
+    while sample_data['next'] != '':
+        frame_idx += 1
+        sample_data_tok = sample_data['next']
+        sample_data = nusc.get('sample_data', sample_data_tok)
+        if not sample_data['is_key_frame']:
+            continue
+        else:
+            sdt_2_idx_dict[sample_data_tok] = (seq_idx, frame_idx)
+
+    dict_dir = "/home/mars/MOS_Projects/nvblox_datasets/nusc/dict"
+    dict_file = os.path.join(dict_dir, "seq-" + str(seq_idx).zfill(4) + ".dict.txt")
+
+    with open(dict_file, "w") as fp:
+        json.dump(sdt_2_idx_dict, fp)
+    print("Save token to index dict to .txt file")
+
 
 def transfer_to_nvblox(scene_idx, scene, nusc):
     """
@@ -199,4 +225,5 @@ if __name__ == '__main__':
     num_scene = len(nusc.scene)
     print(f'There are {num_scene} scenes.')
     for scene_idx, scene in tqdm(enumerate(nusc.scene)):
+        # store_sdt_to_idx_dict(scene_idx, scene, nusc)
         transfer_to_nvblox(scene_idx, scene, nusc)
