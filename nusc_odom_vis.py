@@ -92,8 +92,25 @@ if __name__ == '__main__':
     nusc = NuScenes(version=args.version, dataroot=args.root_dir, verbose=args.verbose)
 
     scene_idx = 0
-    scan_idx_start = 0
-    scan_idx_end = 11
+    scan_idx_start = 120
+    scan_idx_end = 130
+    # 6, 20, 32: rotation case
+
+    scan_cnt = 0
+    for curr_scene_idx, scene in enumerate(nusc.scene):
+        if curr_scene_idx == scene_idx:
+            sample = nusc.get('sample', scene['first_sample_token'])  # sample['prev'], sample['next']
+            sample_data_tok = sample['data']['LIDAR_TOP']
+            sample_data = nusc.get('sample_data', sample_data_tok)
+
+            while sample_data['next'] != '':
+                scan_cnt += 1
+                sample_data_tok = sample_data['next']
+                sample_data = nusc.get('sample_data', sample_data_tok)
+
+                pose_token = sample_data['ego_pose_token']
+                pose = nusc.get('ego_pose', pose_token)
+    print("total scan number in scene %d: %d\n", scene_idx, scan_cnt)
 
     nusc_pcl_tok_list = []
     for curr_scene_idx, scene in enumerate(nusc.scene):

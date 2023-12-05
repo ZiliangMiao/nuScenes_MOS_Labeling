@@ -114,32 +114,34 @@ def store_image(root_dir, sample_data, lidar_intrinsics, depth_img, height_img):
     cv2.imwrite(depth_img, depth_mat)
     cv2.imwrite(height_img, height_mat)
 
-def store_sdt_to_idx_dict(scene_idx, scene, nusc):
+def save_tok_to_idx_dict(scene_idx, scene, nusc):
     seq_idx = scene_idx
     frame_idx = 0
-    sdt_2_idx_dict = {}  # sample data token -> {seq_idx, frame_idx}, only store keyframes
+    sd_tok_to_idx_dict = {}  # sample data token -> {seq_idx, frame_idx}, only store keyframes
+    kf_tok_to_idx_dict = {}  # only store sample data token of keyframes
 
     sample = nusc.get('sample', scene['first_sample_token'])
     sample_data_tok = sample['data']['LIDAR_TOP']
     sample_data = nusc.get('sample_data', sample_data_tok)
 
-    sdt_2_idx_dict[sample_data_tok] = (seq_idx, frame_idx)
+    sd_tok_to_idx_dict[sample_data_tok] = (seq_idx, frame_idx)
+    kf_tok_to_idx_dict[sample_data_tok] = (seq_idx, frame_idx)
     while sample_data['next'] != '':
         frame_idx += 1
         sample_data_tok = sample_data['next']
         sample_data = nusc.get('sample_data', sample_data_tok)
-        if not sample_data['is_key_frame']:
-            continue
-        else:
-            sdt_2_idx_dict[sample_data_tok] = (seq_idx, frame_idx)
+        sd_tok_to_idx_dict[sample_data_tok] = (seq_idx, frame_idx)
+        if sample_data['is_key_frame']:
+            kf_tok_to_idx_dict[sample_data_tok] = (seq_idx, frame_idx)
 
-    dict_dir = "/home/mars/MOS_Projects/nvblox_datasets/nusc/dict"
-    dict_file = os.path.join(dict_dir, "seq-" + str(seq_idx).zfill(4) + ".dict.txt")
+    sd_dict_file = os.path.join(nusc.dataroot, "tok_to_idx_dict", str(seq_idx).zfill(4) + "_sd_dict.txt")
+    kf_dict_file = os.path.join(nusc.dataroot, "tok_to_idx_dict", str(seq_idx).zfill(4) + "_kf_dict.txt")
 
-    with open(dict_file, "w") as fp:
-        json.dump(sdt_2_idx_dict, fp)
+    with open(sd_dict_file, "w") as fp:
+        json.dump(sd_tok_to_idx_dict, fp)
+    with open(kf_dict_file, "w") as fp:
+        json.dump(kf_tok_to_idx_dict, fp)
     print("Save token to index dict to .txt file")
-
 
 def transfer_to_nvblox(scene_idx, scene, nusc):
     """
@@ -210,9 +212,9 @@ def transfer_to_nvblox(scene_idx, scene, nusc):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate nuScenes lidar panaptic gt.')
-    parser.add_argument('--root_dir', type=str, default='/home/mars/MOS_Projects/nuScenes_MOS_Labeling/data',
+    parser.add_argument('--root_dir', type=str, default='/home/mars/MOS_Projects/nuScenes_MOS_Labeling/mini_data',
                         help='Default nuScenes data directory.')
-    parser.add_argument('--version', type=str, default='v1.0-trainval')
+    parser.add_argument('--version', type=str, default='v1.0-mini')
     parser.add_argument('--verbose', type=bool, default=True, help='Whether to print to stdout.')
     args = parser.parse_args()
 
@@ -225,5 +227,5 @@ if __name__ == '__main__':
     num_scene = len(nusc.scene)
     print(f'There are {num_scene} scenes.')
     for scene_idx, scene in tqdm(enumerate(nusc.scene)):
-        # store_sdt_to_idx_dict(scene_idx, scene, nusc)
-        transfer_to_nvblox(scene_idx, scene, nusc)
+        save_tok_to_idx_dict(scene_idx, scene, nusc)
+        # transfer_to_nvblox(scene_idx, scene, nusc)

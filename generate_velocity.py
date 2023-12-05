@@ -122,7 +122,6 @@ if __name__ == '__main__':
 
 
     scenes = nusc.scene
-
     for sample in tqdm(nusc.sample):
         num_inconsistent_boxes, num_boxes = generate_velocity_files(sample, nusc)
 

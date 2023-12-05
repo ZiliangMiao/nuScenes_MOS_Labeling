@@ -4,6 +4,8 @@ import numpy as np
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.data_classes import LidarPointCloud
 
+import matplotlib.pyplot as plt
+
 import open3d as o3d
 
 def pcd_split(pcd_ele_angle, bin_edges):
@@ -47,28 +49,55 @@ if __name__ == '__main__':
     #     color = [start + i * (end - start) / steps for start, end in zip(start_color, end_color)]
     #     rgb_list.append(color)
 
-    nusc = NuScenes(version='v1.0-mini', dataroot='/Users/ziliang/Projects/Dataset/nuScenes', verbose=True)
+    nusc = NuScenes(version='v1.0-mini', dataroot='/home/mars/MOS_Projects/nuScenes_MOS_Labeling/mini_data', verbose=True)
     nusc.list_scenes()
 
-    test_scene = nusc.scene[0]
-    # sample: annotated keyframe of a scene at a given timestamp
-    first_sample_token = test_scene['first_sample_token']
-    # nusc.render_sample(first_sample_token)
-    test_sample = nusc.get('sample', first_sample_token)
-    # sensor sample data
-    sensor = 'LIDAR_TOP'
-    lidar_top_data = nusc.get('sample_data', test_sample['data'][sensor])
+    scene = nusc.scene[1]
+    first_sample_tok = scene['first_sample_token']
+    sample = nusc.get('sample', first_sample_tok)
+    sample_data_tok = sample['data']['LIDAR_TOP']
+    sample_data = nusc.get('sample_data', sample_data_tok)
+
+    # point cloud
+    pcl_path = os.path.join(nusc.dataroot, sample_data['filename'])
+    points_l = LidarPointCloud.from_file(pcl_path).points.T  # [num_points, 4]
+    points_l = points_l[:, :3]  # without intensity
+    x = points_l[:, 0]
+    y = points_l[:, 1]
+    z = points_l[:, 2]
+    r = np.sqrt(np.square(x) + np.square(y) + np.square(z))
+    elevation = 90 - np.degrees(np.arccos(z / r))
+    azimuth = np.degrees(np.arctan2(x, y))
+
+    ele_list = []
+    azi_list = []
+    for point in points_l:
+        x = point[0]
+        y = point[1]
+        z = point[2]
+        r = np.sqrt(np.square(x) + np.square(y) + np.square(z))
+        if r < 1: continue
+        else:
+            ele = 90 - np.degrees(np.arccos(z / r))
+            ele_list.append(ele)
+            azi = np.degrees(np.arctan2(x, y))
+            azi_list.append(azi)
+
+    ele = np.array(ele_list)
+    azi = np.array(azi_list)
+    plt.scatter(azi, ele, s=0.5)
+    plt.show()
+
+
+    # elevation.sort()
+    # elevation = elevation.reshape(32, -1)
+    # hist, bin_edges = np.histogram(elevation, bins=32, range=(-31, 11), density=False)
+
+    # nusc renderer
     # nusc.render_sample_data(lidar_top_data['token'])
-    # test = nusc.get('sample_data', lidar_top_data['token'])
-    pcd_bin_file = os.path.join(nusc.dataroot, nusc.get('sample_data', lidar_top_data['token'])['filename'])
-    point_cloud = LidarPointCloud.from_file(pcd_bin_file)
-    bin_pcd = point_cloud.points.T
-    bin_pcd = bin_pcd.reshape((-1, 4))[:, 0:3]
 
-    elevation_angle = np.degrees(np.arctan(bin_pcd[:, 2] / np.sqrt(np.power(bin_pcd[:, 0], 2) + np.power(bin_pcd[:, 1], 2)))).reshape(-1, 1)
+    points_angle = np.concatenate((points_l, azimuth.reshape(-1, 1), elevation.reshape(-1, 1)), axis=1)
     pcd_ele_angle = np.concatenate((bin_pcd, elevation_angle), axis=1)
-
-    hist, bin_edges = np.histogram(elevation_angle, bins=32, range=(-31, 11), density=False)
 
     num_beam_kept = 24
     pcd_beams_list = pcd_split(pcd_ele_angle, bin_edges)
@@ -92,5 +121,5 @@ if __name__ == '__main__':
 
 
     # sample annotation
-    test_annotation_token = test_sample['anns'][18]
+    test_annotation_token = sample['anns'][18]
     test_annotation_metadata = nusc.get('sample_annotation', test_annotation_token)

@@ -3,10 +3,12 @@ import multiprocessing
 import os
 import os.path
 import subprocess
+import threading
 import warnings
 
 import numpy as np
 import open3d as o3d
+from tqdm import tqdm
 from plyfile import PlyData, PlyElement
 import matplotlib.pyplot as plt
 import argparse
@@ -15,18 +17,17 @@ from nuscenes.utils.data_classes import LidarPointCloud
 from nuscenes.utils.geometry_utils import transform_matrix
 from pyquaternion import Quaternion
 
-o3d_voxel_size = 0.1
+seq_idx = 0
+o3d_voxel_size = 0.2
 o3d_point_size = 2.0
 
 o3d_background_color = (0.859, 0.882, 1.000)  # blue
 # o3d_background_color = (0.71, 0.702, 0.706)  # gray
 
 mos_colormap = {
-        0: (0.439, 0.439, 0.439),    # unknown: gray
-        1: (0.071, 0.369, 0.055),    # static: green-dark
-        # 1: (0, 0, 0),    # static: black
-        # 2: (0.651, 0.086, 0.502)     # moving: purple-dark
-        2: (0, 0, 0)     # moving: black
+        np.uint8(0): (0.439, 0.439, 0.439),    # unknown: gray
+        np.uint8(1): (0.071, 0.369, 0.055),    # static: green-dark
+        np.uint8(2): (0, 0, 0)     # moving: black
 }
 
 # gray colormap: https://colorswall.com/palette/24454
@@ -74,32 +75,6 @@ coolwarm_colormap = {
     6: (180/255, 4/255, 38/255)  # red
 }
 
-sdt_2_idx_dict = {
-    '3388933b59444c5db71fade0bbfef470': (0, 0),  # seq-0, frame-0
-    'bc2cd87d110747cd9849e2b8578b7877': (0, 1),
-    '68cb874a16654e909a7b240a608327db': (0, 2),
-    '262df5a1529c4dcbb6106cb1a23b8a95': (0, 3),
-    '73cd8a8a6c79453f9a7236d550de1e7a': (0, 4),
-    '73a245e42075416db6f181debe3b9873': (0, 5),
-    'ada43a66cd404ab4a27e3f1e400f8e6e': (0, 6),
-    '89db24d0922f4773a63668fb84f82161': (0, 7),
-    'b824950a67e94a4eaaeea0bdfc963879': (0, 8),
-    'd70b301e89e5422498679514a0547d61': (0, 9),   # no
-    '69b793ec8dc44e2fbd33d8cdd16b5a31': (0, 10),  # *yes
-    '9d6543c10b024644a00eba4575c8212e': (0, 11),  # no
-    '5b3d3ed71f154efe987ced333b98f510': (0, 12),  # no
-    '03bf3718e4d44f0c91d73f8161b3d361': (0, 13),  # no
-    'a2f38de77cfa46edbf1809fb6d3118e4': (0, 14),  # no
-    '276e63c991cf414fb7352546c9c845df': (0, 15),  # no
-    '996ef59c52c24b7bb0867462f00837b1': (0, 16),  # no
-    'b8a0680730a741e9a66837c2ab2bbd72': (0, 17),  # no
-    '0e2597532b814f2a8713aeb54b333cce': (0, 18),  # no
-    '9512aac8418f4dcfbe8f72b74061fcff': (0, 19),  # no
-    'ec310d318e6a46c08c43311dd898f0a5': (0, 20),  # *yes
-}
-
-idx_2_sdt_dict = {v: k for k, v in sdt_2_idx_dict.items()}
-
 def run_fuse_kitti_shell():
     # os.system
     print(os.system("/home/mars/MOS_Projects/nvblox/nvblox/script/run_fuse_kitti_frames.sh"))
@@ -125,6 +100,7 @@ def run_fuse_kitti_shell():
     # print(subprocess.call(shell_command_list, shell=True))
 
 def read_esdf(esdf_file):
+    # read esdf from .ply file
     plydata = PlyData.read(esdf_file)
     # esdf = plydata.elements[0].data
     # esdf_data = plydata['vertex'].data
@@ -140,207 +116,6 @@ def read_esdf(esdf_file):
     # NOTE!!! do not use np.fromfile to read the .ply file
     esdf = np.array([x, y, z, i]).T
     return esdf
-
-def open3d_vis_esdf(esdf):
-    esdf_points = esdf[:, :3]
-    esdf_dis = esdf[:, -1].reshape((-1, 1))
-
-    esdf_max = np.max(esdf_dis)
-    esdf_min = np.min(esdf_dis)
-    esdf_dis_norm = 1 - (esdf_dis - esdf_min) / (esdf_max - esdf_min)
-    esdf_colors = np.tile(esdf_dis_norm, (1, 3))  # repeat array alone axis-0 and axis-1 respectively
-
-    esdf_pcd = o3d.geometry.PointCloud()
-    esdf_pcd.points = o3d.utility.Vector3dVector(esdf_points)
-    esdf_pcd.colors = o3d.utility.Vector3dVector(esdf_colors)  # 0: WHITE, 1: BLACK
-
-    print('Displaying voxel grid ...')
-    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_pcd, voxel_size=o3d_voxel_size)
-
-    # Open3D Vis
-    vis = o3d.visualization.Visualizer()
-    vis.create_window()
-    vis.add_geometry(voxel_grid)
-
-    # Vis Settings (render options & view control)
-    opt = vis.get_render_option()
-    opt.background_color = np.asarray(o3d_background_color)
-    ctrl = vis.get_view_control()
-    # ctrl.set_front((-0.020588885231781512, 0.10962245064836584, 0.99376003950589564))
-    # ctrl.set_lookat((0.066336316011035693, 3.437049303689776, 0.11533577801642712))
-    # ctrl.set_up((0.40551647562275533, 0.90945418190674621, -0.091921047703072634))
-    # ctrl.set_zoom((0.45999999999999974))
-
-    # Vis Run
-    vis.run()
-    vis.destroy_window()
-
-def open3d_vis_esdf_mos(esdf, sample_data_token, nusc):
-    esdf_points = esdf[:, :3]
-    esdf_dis = esdf[:, -1]
-
-    esdf_dis, valid_color_idx = transfer_to_colormap_key(esdf_dis)
-    color_func = np.vectorize(coolwarm_colormap.get)
-    esdf_color = np.array(color_func(esdf_dis)).T
-
-    # point cloud with mos label
-    points_w, valid_points_idx = get_pcl_in_world_frame(nusc, sample_data_token)
-    points_color = np.full_like(points_w, 0.3)
-
-    pts = o3d.geometry.PointCloud()
-    pts.points = o3d.utility.Vector3dVector(points_w)
-    pts.colors = o3d.utility.Vector3dVector(points_color)
-
-    # Open3D Vis
-    esdf_pcd = o3d.geometry.PointCloud()
-    esdf_pcd.points = o3d.utility.Vector3dVector(esdf_points)
-    esdf_pcd.colors = o3d.utility.Vector3dVector(esdf_color)
-    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_pcd, voxel_size=o3d_voxel_size)
-
-    vis = o3d.visualization.Visualizer()  # visualizer
-    vis.create_window()
-    vis.add_geometry(voxel_grid)
-    vis.add_geometry(pts)
-
-    opt = vis.get_render_option()  # render option
-    opt.point_size = o3d_point_size
-    opt.background_color = np.asarray(o3d_background_color)
-    ctrl = vis.get_view_control()  # view control
-
-    vis.run()  # run
-    vis.destroy_window()
-
-def open3d_vis_esdf_res(esdf_res):
-    esdf_points = esdf_res[:, :3]
-    esdf_dis = esdf_res[:, -1].reshape((-1, 1))
-
-    # process the newly observed voxels (np.nan)
-    nan_idx = np.argwhere(np.isnan(esdf_res[:, -1]))
-    # transfer nan to zero
-    esdf_dis[nan_idx] = 0
-
-    # absolute (to vis esdf residual)
-    esdf_dis = np.absolute(esdf_dis)
-
-    esdf_max = np.max(esdf_dis)
-    esdf_min = np.min(esdf_dis)
-    esdf_dis_norm = 1 - (esdf_dis - esdf_min) / (esdf_max - esdf_min)
-    esdf_colors = np.tile(esdf_dis_norm, (1, 3))  # repeat array alone axis-0 and axis-1 respectively
-    # esdf_colors[nan_idx] = (0.941, 0.431, 0.478)  # change color of nan to blue
-    esdf_colors[nan_idx] = o3d_background_color  # transparency: set nan voxel to the background color
-
-    esdf_pcd = o3d.geometry.PointCloud()
-    esdf_pcd.points = o3d.utility.Vector3dVector(esdf_points)
-    esdf_pcd.colors = o3d.utility.Vector3dVector(
-        esdf_colors)  # 0: black, 1: white (voxels with max distance are colored white)
-
-    print('Displaying voxel grid ...')
-    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_pcd, voxel_size=o3d_voxel_size)
-
-    # Open3D Vis
-    vis = o3d.visualization.Visualizer()
-    vis.create_window()
-    vis.add_geometry(voxel_grid)
-
-    # Vis Settings (render options & view control)
-    opt = vis.get_render_option()
-    opt.background_color = np.asarray(o3d_background_color)
-    ctrl = vis.get_view_control()
-    # ctrl.set_front((-0.020588885231781512, 0.10962245064836584, 0.99376003950589564))
-    # ctrl.set_lookat((0.066336316011035693, 3.437049303689776, 0.11533577801642712))
-    # ctrl.set_up((0.40551647562275533, 0.90945418190674621, -0.091921047703072634))
-    # ctrl.set_zoom((0.45999999999999974))
-
-    # Vis Run
-    vis.run()
-    vis.destroy_window()
-
-def open3d_vis_esdf_res_mos(esdf_res, sample_data_token, nusc):
-    res = esdf_res[:, -1]
-
-    # process the newly observed voxels (np.nan)
-    nan_idx = np.argwhere(np.isnan(res))
-    neg_6_idx = np.argwhere(res <= -1.00)                # (-infinite, -1.00] m
-    neg_5_idx = np.argwhere((-1.00 < res) & (res <= -0.50))  # (-1.00, -0.50] m
-    neg_4_idx = np.argwhere((-0.50 < res) & (res <= -0.20))  # (-0.50, -0.20] m
-    neg_3_idx = np.argwhere((-0.20 < res) & (res <= -0.10))  # (-0.20, -0.10] m
-    neg_2_idx = np.argwhere((-0.10 < res) & (res <= -0.05))  # (-0.10, -0.05] m
-    neg_1_idx = np.argwhere((-0.05 < res) & (res <   0.00))  # (-0.05, -0.00) m
-    mid_0_idx = np.argwhere(res == 0)                    # [0] m
-    pos_1_idx = np.argwhere((0.00  < res) & (res < 0.05))    # (0.00, 0.05) m
-    pos_2_idx = np.argwhere((0.05 <= res) & (res < 0.10))    # [0.05, 0.10) m
-    pos_3_idx = np.argwhere((0.10 <= res) & (res < 0.20))    # [0.10, 0.20) m
-    pos_4_idx = np.argwhere((0.20 <= res) & (res < 0.50))    # [0.20, 0.50) m
-    pos_5_idx = np.argwhere((0.50 <= res) & (res < 1.00))    # [0.50, 1.00) m
-    pos_6_idx = np.argwhere(1.00 <= res)                 # [1.00, infinite) m
-
-    res[nan_idx] = 100
-    res[neg_6_idx] = -6
-    res[neg_5_idx] = -5
-    res[neg_4_idx] = -4
-    res[neg_3_idx] = -3
-    res[neg_2_idx] = -2
-    res[neg_1_idx] = -1
-    res[mid_0_idx] = 0
-    res[pos_1_idx] = 1
-    res[pos_2_idx] = 2
-    res[pos_3_idx] = 3
-    res[pos_4_idx] = 4
-    res[pos_5_idx] = 5
-    res[pos_6_idx] = 6
-
-    color_func = np.vectorize(coolwarm_colormap.get)
-    esdf_res_color = np.array(color_func(res)).T
-
-    esdf_pcd = o3d.geometry.PointCloud()
-    esdf_pcd.points = o3d.utility.Vector3dVector(esdf_res[:, :3])
-    esdf_pcd.colors = o3d.utility.Vector3dVector(esdf_res_color)
-
-    print('Displaying voxel grid ...')
-    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_pcd, voxel_size=o3d_voxel_size)
-
-    points_w, valid_points_idx = get_pcl_in_world_frame(nusc, sample_data_token)
-
-    # esdf residual: next - curr
-    # mos label: next
-    mos_labels_file = os.path.join(nusc.dataroot, 'mos_labels', nusc.version, sample_data_token + "_mos.label")
-    points_label = np.fromfile(mos_labels_file, dtype=np.uint8)
-    # remove static points from the vis point cloud
-    unknown_idx = np.argwhere(points_label == 0)
-    static_idx = np.argwhere(points_label == 1)
-    mov_idx = np.argwhere(points_label == 2)
-    vis_points = np.squeeze(np.vstack((points_w[mov_idx], points_w[unknown_idx])))
-    vis_labels = np.squeeze(np.vstack((points_label[mov_idx], points_label[unknown_idx])))
-
-    pts = o3d.geometry.PointCloud()
-    pts.points = o3d.utility.Vector3dVector(vis_points)
-    vfunc = np.vectorize(mos_colormap.get)
-    points_color = np.array(vfunc(vis_labels)).T
-    pts.colors = o3d.utility.Vector3dVector(points_color)
-
-    # origin
-    # axis_pcd = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
-
-    # Open3D Vis
-    vis = o3d.visualization.Visualizer()
-    vis.create_window()
-    vis.add_geometry(voxel_grid)
-    vis.add_geometry(pts)
-    # vis.add_geometry(axis_pcd)
-
-    # Vis Settings (render options & view control)
-    opt = vis.get_render_option()
-    opt.point_size = o3d_point_size
-    opt.background_color = np.asarray(o3d_background_color)
-    ctrl = vis.get_view_control()
-    # ctrl.set_front((-0.020588885231781512, 0.10962245064836584, 0.99376003950589564))
-    # ctrl.set_lookat((0.066336316011035693, 3.437049303689776, 0.11533577801642712))
-    # ctrl.set_up((0.40551647562275533, 0.90945418190674621, -0.091921047703072634))
-    # ctrl.set_zoom((0.45999999999999974))
-
-    # Vis Run
-    vis.run()
-    vis.destroy_window()
 
 def transfer_to_colormap_key(res):
     nan_idx = np.argwhere(np.isnan(res))
@@ -410,7 +185,259 @@ def filter_far_points(points):
     valid_points_idx = np.squeeze(np.argwhere(points_dist <= max_dis))
     return valid_points_idx
 
-# current esdf residual, and next mos point cloud
+def open3d_vis_esdf(esdf):
+    esdf_points = esdf[:, :3]
+    esdf_dis = esdf[:, -1]
+
+    esdf_dis, valid_color_idx = transfer_to_colormap_key(esdf_dis)
+    color_func = np.vectorize(coolwarm_colormap.get)
+    esdf_color = np.array(color_func(esdf_dis)).T
+
+    # Open3D Vis
+    esdf_pcd = o3d.geometry.PointCloud()
+    esdf_pcd.points = o3d.utility.Vector3dVector(esdf_points)
+    esdf_pcd.colors = o3d.utility.Vector3dVector(esdf_color)
+    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_pcd, voxel_size=o3d_voxel_size)
+
+    vis = o3d.visualization.Visualizer()  # visualizer
+    vis.create_window()
+    vis.add_geometry(voxel_grid)
+
+    opt = vis.get_render_option()  # render option
+    opt.background_color = np.asarray(o3d_background_color)
+    ctrl = vis.get_view_control()  # view control
+
+    vis.run()  # run
+    vis.destroy_window()
+
+def open3d_vis_esdf_mos(esdf, sample_data_token, nusc):
+    esdf_points = esdf[:, :3]
+    esdf_dis = esdf[:, -1]
+
+    esdf_dis, valid_color_idx = transfer_to_colormap_key(esdf_dis)
+    color_func = np.vectorize(coolwarm_colormap.get)
+    esdf_color = np.array(color_func(esdf_dis)).T
+
+    # point cloud with mos label
+    points_w, valid_points_idx = get_pcl_in_world_frame(nusc, sample_data_token)
+    points_color = np.full_like(points_w, 0.3)
+
+    pts = o3d.geometry.PointCloud()
+    pts.points = o3d.utility.Vector3dVector(points_w)
+    pts.colors = o3d.utility.Vector3dVector(points_color)
+
+    # Open3D Vis
+    esdf_pcd = o3d.geometry.PointCloud()
+    esdf_pcd.points = o3d.utility.Vector3dVector(esdf_points)
+    esdf_pcd.colors = o3d.utility.Vector3dVector(esdf_color)
+    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_pcd, voxel_size=o3d_voxel_size)
+
+    vis = o3d.visualization.Visualizer()  # visualizer
+    vis.create_window()
+    vis.add_geometry(voxel_grid)
+    vis.add_geometry(pts)
+
+    opt = vis.get_render_option()  # render option
+    opt.point_size = o3d_point_size
+    opt.background_color = np.asarray(o3d_background_color)
+    ctrl = vis.get_view_control()  # view control
+
+    vis.run()  # run
+    vis.destroy_window()
+
+def open3d_vis_esdfres_point(esdf_res, idx_tup, nusc):  # esdf residual + point cloud (not colored by mos labels)
+    # get sample data token from index tuple
+    (seq_idx, curr_frame_idx, next_frame_idx) = idx_tup
+    sample_data_tok_curr = sd_idx_to_tok_dict[(seq_idx, curr_frame_idx)]
+    sample_data_tok_next = sd_idx_to_tok_dict[(seq_idx, next_frame_idx)]
+    sample_data_tok_list = [sample_data_tok_curr, sample_data_tok_next]
+    gray_value_list = [0.6, 0.1]
+
+    # get color of esdf residual
+    residual = esdf_res[:, -1]
+    nan_idx = np.argwhere(np.isnan(residual))  # process the newly observed voxels (np.nan)
+    neg_6_idx = np.argwhere(residual <= -1.00)                # (-infinite, -1.00] m
+    neg_5_idx = np.argwhere((-1.00 < residual) & (residual <= -0.50))  # (-1.00, -0.50] m
+    neg_4_idx = np.argwhere((-0.50 < residual) & (residual <= -0.20))  # (-0.50, -0.20] m
+    neg_3_idx = np.argwhere((-0.20 < residual) & (residual <= -0.10))  # (-0.20, -0.10] m
+    neg_2_idx = np.argwhere((-0.10 < residual) & (residual <= -0.05))  # (-0.10, -0.05] m
+    neg_1_idx = np.argwhere((-0.05 < residual) & (residual <   0.00))  # (-0.05, -0.00) m
+    mid_0_idx = np.argwhere(residual == 0)                    # [0] m
+    pos_1_idx = np.argwhere((0.00  < residual) & (residual < 0.05))    # (0.00, 0.05) m
+    pos_2_idx = np.argwhere((0.05 <= residual) & (residual < 0.10))    # [0.05, 0.10) m
+    pos_3_idx = np.argwhere((0.10 <= residual) & (residual < 0.20))    # [0.10, 0.20) m
+    pos_4_idx = np.argwhere((0.20 <= residual) & (residual < 0.50))    # [0.20, 0.50) m
+    pos_5_idx = np.argwhere((0.50 <= residual) & (residual < 1.00))    # [0.50, 1.00) m
+    pos_6_idx = np.argwhere(1.00 <= residual)                 # [1.00, infinite) m
+
+    residual[nan_idx] = 100
+    residual[neg_6_idx] = -6
+    residual[neg_5_idx] = -5
+    residual[neg_4_idx] = -4
+    residual[neg_3_idx] = -3
+    residual[neg_2_idx] = -2
+    residual[neg_1_idx] = -1
+    residual[mid_0_idx] = 0
+    residual[pos_1_idx] = 1
+    residual[pos_2_idx] = 2
+    residual[pos_3_idx] = 3
+    residual[pos_4_idx] = 4
+    residual[pos_5_idx] = 5
+    residual[pos_6_idx] = 6
+
+    color_func = np.vectorize(coolwarm_colormap.get)
+    esdf_res_color = np.array(color_func(residual)).T
+
+    # create Open3D Vis
+    vis = o3d.visualization.Visualizer()
+    vis.create_window()
+
+    # integrate esdf voxel grid to open3d vis
+    esdf_pcd = o3d.geometry.PointCloud()
+    esdf_pcd.points = o3d.utility.Vector3dVector(esdf_res[:, :3])
+    esdf_pcd.colors = o3d.utility.Vector3dVector(esdf_res_color)
+    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_pcd, voxel_size=o3d_voxel_size)
+    vis.add_geometry(voxel_grid)
+
+    # whether curr or next is keyframe:
+    for sample_data_tok, gray_value in zip(sample_data_tok_list, gray_value_list):
+        points_w, valid_points_idx = get_pcl_in_world_frame(nusc, sample_data_tok)
+
+        # integrate point cloud to open3d vis
+        pts = o3d.geometry.PointCloud()
+        pts.points = o3d.utility.Vector3dVector(points_w)
+        points_color = np.full_like(points_w, gray_value)
+        pts.colors = o3d.utility.Vector3dVector(points_color)
+        vis.add_geometry(pts)
+
+    # open3d origin
+    # axis_pcd = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
+    # open3d axis
+    # vis.add_geometry(axis_pcd)
+
+    # Vis Settings (render options & view control)
+    opt = vis.get_render_option()
+    opt.point_size = o3d_point_size
+    opt.background_color = np.asarray(o3d_background_color)
+    ctrl = vis.get_view_control()
+    # ctrl.set_front((-0.020588885231781512, 0.10962245064836584, 0.99376003950589564))
+    # ctrl.set_lookat((0.066336316011035693, 3.437049303689776, 0.11533577801642712))
+    # ctrl.set_up((0.40551647562275533, 0.90945418190674621, -0.091921047703072634))
+    # ctrl.set_zoom((0.45999999999999974))
+
+    # Vis Run
+    vis.run()
+    vis.destroy_window()
+
+# whether curr and next is keyframe, render the point cloud with mos label!
+def open3d_vis_esdfres_mos(esdf_res, idx_tup, nusc):  # esdf residual + point cloud (colored by mos labels)
+    # get sample data token from index tuple
+    (seq_idx, curr_frame_idx, next_frame_idx) = idx_tup
+    sample_data_tok_curr = sd_idx_to_tok_dict[(seq_idx, curr_frame_idx)]
+    sample_data_tok_next = sd_idx_to_tok_dict[(seq_idx, next_frame_idx)]
+    sample_data_tok_list = [sample_data_tok_curr, sample_data_tok_next]
+
+    # get color of esdf residual
+    residual = esdf_res[:, -1]
+    nan_idx = np.argwhere(np.isnan(residual))  # process the newly observed voxels (np.nan)
+    neg_6_idx = np.argwhere(residual <= -1.00)                # (-infinite, -1.00] m
+    neg_5_idx = np.argwhere((-1.00 < residual) & (residual <= -0.50))  # (-1.00, -0.50] m
+    neg_4_idx = np.argwhere((-0.50 < residual) & (residual <= -0.20))  # (-0.50, -0.20] m
+    neg_3_idx = np.argwhere((-0.20 < residual) & (residual <= -0.10))  # (-0.20, -0.10] m
+    neg_2_idx = np.argwhere((-0.10 < residual) & (residual <= -0.05))  # (-0.10, -0.05] m
+    neg_1_idx = np.argwhere((-0.05 < residual) & (residual <   0.00))  # (-0.05, -0.00) m
+    mid_0_idx = np.argwhere(residual == 0)                    # [0] m
+    pos_1_idx = np.argwhere((0.00  < residual) & (residual < 0.05))    # (0.00, 0.05) m
+    pos_2_idx = np.argwhere((0.05 <= residual) & (residual < 0.10))    # [0.05, 0.10) m
+    pos_3_idx = np.argwhere((0.10 <= residual) & (residual < 0.20))    # [0.10, 0.20) m
+    pos_4_idx = np.argwhere((0.20 <= residual) & (residual < 0.50))    # [0.20, 0.50) m
+    pos_5_idx = np.argwhere((0.50 <= residual) & (residual < 1.00))    # [0.50, 1.00) m
+    pos_6_idx = np.argwhere(1.00 <= residual)                 # [1.00, infinite) m
+
+    residual[nan_idx] = 100
+    residual[neg_6_idx] = -6
+    residual[neg_5_idx] = -5
+    residual[neg_4_idx] = -4
+    residual[neg_3_idx] = -3
+    residual[neg_2_idx] = -2
+    residual[neg_1_idx] = -1
+    residual[mid_0_idx] = 0
+    residual[pos_1_idx] = 1
+    residual[pos_2_idx] = 2
+    residual[pos_3_idx] = 3
+    residual[pos_4_idx] = 4
+    residual[pos_5_idx] = 5
+    residual[pos_6_idx] = 6
+
+    color_func = np.vectorize(coolwarm_colormap.get)
+    esdf_res_color = np.array(color_func(residual)).T
+
+    # create Open3D Vis
+    vis = o3d.visualization.Visualizer()
+    vis.create_window()
+
+    # integrate esdf voxel grid to open3d vis
+    esdf_pcd = o3d.geometry.PointCloud()
+    esdf_pcd.points = o3d.utility.Vector3dVector(esdf_res[:, :3])
+    esdf_pcd.colors = o3d.utility.Vector3dVector(esdf_res_color)
+    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_pcd, voxel_size=o3d_voxel_size)
+    vis.add_geometry(voxel_grid)
+
+    # whether curr or next is keyframe:
+    for sample_data_tok in sample_data_tok_list:
+        sample_data = nusc.get('sample_data', sample_data_tok)
+        if sample_data['is_key_frame']:
+            points_w, valid_points_idx = get_pcl_in_world_frame(nusc, sample_data_tok)
+            mos_labels_file = os.path.join(nusc.dataroot, 'mos_labels', nusc.version, sample_data_tok + "_mos.label")
+            points_label = np.fromfile(mos_labels_file, dtype=np.uint8)
+
+            vfunc = np.vectorize(mos_colormap.get)
+            # only vis moving points
+            mov_idx = np.argwhere(points_label == 2).ravel()
+            points_mov = points_w[mov_idx]
+            colors_mov = np.array(vfunc(points_label[mov_idx])).T
+            o3d_pts_mov = o3d.geometry.PointCloud()
+            o3d_pts_mov.points = o3d.utility.Vector3dVector(points_mov)
+            o3d_pts_mov.colors = o3d.utility.Vector3dVector(colors_mov)
+
+            unk_idx = np.argwhere(points_label == 0).ravel()
+            points_unk = points_w[unk_idx]
+            colors_unk = np.array(vfunc(points_label[unk_idx])).T
+            o3d_pts_unk = o3d.geometry.PointCloud()
+            o3d_pts_unk.points = o3d.utility.Vector3dVector(points_unk)
+            o3d_pts_unk.colors = o3d.utility.Vector3dVector(colors_unk)
+
+            sta_idx = np.argwhere(points_label == 1).ravel()
+            points_sta = points_w[sta_idx]
+            colors_sta = np.array(vfunc(points_label[sta_idx])).T
+            o3d_pts_sta = o3d.geometry.PointCloud()
+            o3d_pts_sta.points = o3d.utility.Vector3dVector(points_sta)
+            o3d_pts_sta.colors = o3d.utility.Vector3dVector(colors_sta)
+
+            vis.add_geometry(o3d_pts_mov)
+            vis.add_geometry(o3d_pts_unk)
+            # vis.add_geometry(o3d_pts_sta)
+
+            # vis_points = np.concatenate((points_w[mov_idx], points_w[unknown_idx]), axis=0)
+            # vis_labels = np.concatenate((points_label[mov_idx], points_label[unknown_idx]), axis=0)
+
+    # open3d origin
+    # axis_pcd = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
+
+    # Vis Settings (render options & view control)
+    opt = vis.get_render_option()
+    opt.point_size = o3d_point_size
+    opt.background_color = np.asarray(o3d_background_color)
+    ctrl = vis.get_view_control()
+    # ctrl.set_front((-0.020588885231781512, 0.10962245064836584, 0.99376003950589564))
+    # ctrl.set_lookat((0.066336316011035693, 3.437049303689776, 0.11533577801642712))
+    # ctrl.set_up((0.40551647562275533, 0.90945418190674621, -0.091921047703072634))
+    # ctrl.set_zoom((0.45999999999999974))
+
+    # Vis Run
+    vis.run()
+    vis.destroy_window()
+
 def open3d_vis_esdf_res_curr_mos_next(esdf_res, sample_data_token, nusc):
     res = esdf_res[:, -1]
 
@@ -590,15 +617,6 @@ def esdf_histogram(esdf):
     plt.ylim(ymax=np.ceil(maxfreq / 10) * 10 if maxfreq % 10 else maxfreq + 10)
     plt.show()
 
-def compute_residual(curr_voxel_idx, curr_voxel, esdf_hist_voxels, esdf_residual):
-    row_idx = np.where((esdf_hist_voxels == curr_voxel).all(axis=1))[0]
-    if row_idx:  # not empty
-        curr_residual = esdf_next[curr_voxel_idx, -1] - esdf_curr[row_idx, -1]
-        esdf_residual[curr_voxel_idx] = np.append(curr_voxel, curr_residual)
-    else:  # empty
-        curr_residual = np.nan
-        esdf_residual[curr_voxel_idx] = np.append(curr_voxel, curr_residual)
-
 def open3d_compare_resolution(esdf_1, esdf_2):
     esdf_1_points = esdf_1[:, :3]
     esdf_2_points = esdf_2[:, :3]
@@ -641,10 +659,59 @@ def open3d_compare_resolution(esdf_1, esdf_2):
     vis_1.destroy_window()
     vis_2.destroy_window()
 
+def cal_esdf_res(curr_frame_idx):
+    print("No ESDF residual file or directory! Start computing ESDF residual:")
+    esdf_curr_file = os.path.join(esdf_dir, str(seq_idx).zfill(4), "resolution-" + str(o3d_voxel_size),
+                                  "global_esdf_" + str(curr_frame_idx) + ".bin")
+    esdf_next_file = os.path.join(esdf_dir, str(seq_idx).zfill(4), "resolution-" + str(o3d_voxel_size),
+                                  "global_esdf_" + str(curr_frame_idx + 1) + ".bin")
+    esdf_curr = np.fromfile(esdf_curr_file, dtype=np.float32).reshape((-1, 4))
+    esdf_next = np.fromfile(esdf_next_file, dtype=np.float32).reshape((-1, 4))
+
+    esdf_next_voxels = esdf_next[:, :3]
+    esdf_curr_voxels = esdf_curr[:, :3]
+    esdf_residual = np.zeros_like(esdf_next)  # dtype=np.float32
+
+    num_nan = 0
+    warnings.filterwarnings("ignore")
+    esdf_curr_voxels_list = esdf_curr_voxels.tolist()
+    for next_voxel_idx, next_voxel in enumerate(tqdm(esdf_next_voxels)):
+        try:
+            row_idx = esdf_curr_voxels_list.index(next_voxel.tolist())
+            residual = esdf_next[next_voxel_idx, -1] - esdf_curr[row_idx, -1]
+            esdf_residual[next_voxel_idx] = np.append(next_voxel, residual)
+        except:
+            row_idx = -1
+            residual = np.nan
+            esdf_residual[next_voxel_idx] = np.append(next_voxel, residual)
+            num_nan += 1
+        # pad and isin function:
+        # isin = np.isin(esdf_curr_voxels, esdf_next_voxels)  # esdf_curr_voxels is subset of esdf_next_voxels
+        # pad_width = ((0, esdf_next_voxels.shape[0] - esdf_curr_voxels.shape[0]), (0, 0))  # two axis
+        # esdf_curr_padded = np.pad(esdf_curr_voxels, pad_width, 'constant')
+
+        # row_idx = np.where((esdf_curr_voxels == next_voxel).all(axis=1))[0]
+        # if row_idx:  # not empty
+        #     residual = esdf_next[next_voxel_idx, -1] - esdf_curr[row_idx, -1]
+        #     esdf_residual[next_voxel_idx] = np.append(next_voxel, residual)
+        # else:  # empty
+        #     residual = np.nan
+        #     esdf_residual[next_voxel_idx] = np.append(next_voxel, residual)
+        #     num_nan += 1
+
+    print("Num of current voxels: ", str(esdf_next.shape[0]), "; Num of history voxels: ", str(esdf_curr.shape[0]),
+          "; Num of voxels with NaN residual: ", str(num_nan))
+
+    resolution_dir = os.path.join(esdf_res_dir, str(seq_idx).zfill(4), "resolution-" + str(o3d_voxel_size))
+    os.makedirs(resolution_dir, exist_ok=True)
+    residual_file = os.path.join(resolution_dir, "global_esdf_res_" + str(curr_frame_idx + 1) + "-" + str(curr_frame_idx) + ".bin")
+    esdf_residual.tofile(residual_file)
+    print("Save ESDF Residual to .bin file: ")
+    return esdf_residual
 
 if __name__ == '__main__':
     # Switch
-    run_kitti = False
+    cal_esdf_res = False
     vis_esdf_histogram = False
     vis_esdf = False
     vis_esdf_res = True
@@ -652,94 +719,61 @@ if __name__ == '__main__':
 
     # args
     parser = argparse.ArgumentParser(description='Generate nuScenes lidar panaptic gt.')
-    parser.add_argument('--root_dir', type=str, default='/home/mars/MOS_Projects/nuScenes_MOS_Labeling/data')
-    parser.add_argument('--version', type=str, default='v1.0-trainval')
+    parser.add_argument('--root_dir', type=str, default='/home/mars/MOS_Projects/nuScenes_MOS_Labeling/mini_data')
+    parser.add_argument('--version', type=str, default='v1.0-mini')
     parser.add_argument('--verbose', type=bool, default=True, help='Whether to print to stdout.')
     args = parser.parse_args()
+    esdf_dir = os.path.join(args.root_dir, "esdf")
+    esdf_res_dir = os.path.join(args.root_dir, "esdf_res")
 
     if vis_esdf or vis_esdf_res or vis_compare_resolution:
         nusc = NuScenes(version=args.version, dataroot=args.root_dir, verbose=args.verbose)
+        # load sample data dict & keyframe dict
+        sd_dict_file = os.path.join(nusc.dataroot, "tok_to_idx_dict", str(seq_idx).zfill(4) + "_sd_dict.txt")
+        kf_dict_file = os.path.join(nusc.dataroot, "tok_to_idx_dict", str(seq_idx).zfill(4) + "_kf_dict.txt")
+        with open(sd_dict_file, "r") as fp:
+            sd_dict = json.load(fp)
+        with open(kf_dict_file, "r") as fp:
+            kf_dict = json.load(fp)
+        sd_idx_to_tok_dict = {(v[0], v[1]): k for k, v in sd_dict.items()}
+        kf_idx_to_tok_dict = {(v[0], v[1]): k for k, v in kf_dict.items()}
     else:
         nusc = None
 
-    # Path
-    seq_idx = 0
-    frame_idx = 9
-    esdf_dir = "/home/mars/MOS_Projects/nvblox_datasets/nusc/esdf"
-    esdf_res_dir = "/home/mars/MOS_Projects/nvblox_datasets/nusc/esdf_res"
+    # Loop Calculate Esdf Residual (Multi-processing)
+    if cal_esdf_res:
+        pool = multiprocessing.Pool(processes=64)
+        for curr_frame_idx in tqdm(range(10, 381)):
+            pool.apply_async(func=cal_esdf_res, args=(curr_frame_idx,))
+        pool.close()
+        pool.join()
 
-    # load keyframe dict
-    dict_dir = "/home/mars/MOS_Projects/nvblox_datasets/nusc/dict"
-    dict_file = os.path.join(dict_dir, "seq-" + str(seq_idx).zfill(4) + ".dict.txt")
-    with open(dict_file, "r") as fp:
-        keyframes_dict = json.load(fp)
-    keyframes_dict_inv = {(v[0], v[1]): k for k, v in keyframes_dict.items()}
-
-    sample_data_token = idx_2_sdt_dict[(seq_idx, frame_idx)]
-
-    # Shell script
-    if run_kitti:
-        run_fuse_kitti_shell()
-    # truncation_distance_vox   |   max_distance_m (esdf)   |   Integrated TSDF block (frame-0 / frame-1)   |   update blocks (frame-0 / frame-1)
-    # 50                        |     10                    |    3255 / 3282                                |   40 / 40
-    # 30                        |     10                    |    2146 / 2162                                |   40 / 40
-    # 10                        |     10                    |    1325 / 1336                                |   40 / 40
-    # 4                         |     20                    |    1148 / 1162                                |   40 / 40
-    # 4 (default)               |     10                    |    1148 / 1162                                |   40 / 40
-    # 1                         |     10                    |    1086 / 1098                                |   40 / 40
-
-    if vis_compare_resolution:
-        esdf_1 = read_esdf(os.path.join(esdf_dir, "seq-" + str(seq_idx).zfill(4), "resolution-0.2", "frame-" + str(frame_idx).zfill(6) + ".esdf_next.ply"))
-        esdf_2 = read_esdf(os.path.join(esdf_dir, "seq-" + str(seq_idx).zfill(4), "resolution-0.5", "frame-" + str(frame_idx).zfill(6) + ".esdf_next.ply"))
-        open3d_compare_resolution(esdf_1, esdf_2)
-
+    # Visualization Only
+    curr_frame_idx = 10
+    next_frame_idx = 11
+    idx_tup = (seq_idx, curr_frame_idx, next_frame_idx)
     try:  # load stored esdf residual file
-        resolution_dir = os.path.join(esdf_res_dir, "seq-" + str(seq_idx).zfill(4), "resolution-" + str(o3d_voxel_size))
-        residual_file = os.path.join(resolution_dir, "frame-" + str(frame_idx).zfill(6) + ".esdf_res.bin")
+        residual_file = os.path.join(esdf_res_dir, str(seq_idx).zfill(4), "resolution-" + str(o3d_voxel_size), "global_esdf_res_" + str(next_frame_idx) + "-" + str(curr_frame_idx) + ".bin")
         esdf_residual = np.fromfile(residual_file, dtype=np.float32).reshape((-1, 4))
-        if vis_esdf_histogram:
-            esdf_histogram(esdf_residual)
-        if vis_esdf_res:
-            # open3d_vis_esdf_res_mos(esdf_residual, sample_data_token, nusc)
-            open3d_vis_esdf_res_curr_mos_next(esdf_residual, sample_data_token, nusc)
-            # open3d_vis_esdf_res_keyframes(esdf_residual, sample_data_token, nusc)
         # not_nan_idx = np.argwhere(np.invert(np.isnan(esdf_residual[:, -1])))
-        # residual = esdf_residual[not_nan_idx, -1]
-
     except IOError:
-        print("No ESDF residual file or directory! Start computing ESDF residual:")
-        esdf_next = read_esdf(os.path.join(esdf_dir, "seq-" + str(seq_idx).zfill(4), "resolution-" + str(o3d_voxel_size), "frame-" + str(frame_idx).zfill(6) + ".esdf_next.ply"))
-        esdf_curr = read_esdf(os.path.join(esdf_dir, "seq-" + str(seq_idx).zfill(4), "resolution-" + str(o3d_voxel_size), "frame-" + str(frame_idx).zfill(6) + ".esdf_curr.ply"))
-        if vis_esdf:
-            open3d_vis_esdf_mos(esdf_curr, sample_data_token, nusc)
-        if vis_esdf_histogram:
-            esdf_histogram(esdf_curr)
+        esdf_residual = cal_esdf_res(curr_frame_idx)
 
-        esdf_next_voxels = esdf_next[:, :3]
-        esdf_curr_voxels = esdf_curr[:, :3]
-        esdf_residual = np.zeros_like(esdf_next)  # dtype=np.float32
-
-        num_nan = 0
-        warnings.filterwarnings("ignore")
-        for next_voxel_idx, next_voxel in enumerate(esdf_next_voxels):
-            row_idx = np.where((esdf_curr_voxels == next_voxel).all(axis=1))[0]
-            if row_idx:  # not empty
-                residual = esdf_next[next_voxel_idx, -1] - esdf_curr[row_idx, -1]
-                esdf_residual[next_voxel_idx] = np.append(next_voxel, residual)
-            else:  # empty
-                residual = np.nan
-                esdf_residual[next_voxel_idx] = np.append(next_voxel, residual)
-                num_nan += 1
-        print("Num of current voxels: ", str(esdf_next.shape[0]), "; Num of history voxels: ", str(esdf_curr.shape[0]),
-              "; Num of voxels with NaN residual: ", str(num_nan))
-
-        resolution_dir = os.path.join(esdf_res_dir, "seq-" + str(seq_idx).zfill(4), "resolution-" + str(o3d_voxel_size))
-        os.makedirs(resolution_dir, exist_ok=True)
-        residual_file = os.path.join(resolution_dir, "frame-" + str(frame_idx).zfill(6) + ".esdf_res.bin")
-        esdf_residual.tofile(residual_file)
-        print("Save ESDF Residual to .bin file: ")
-
-        if vis_esdf_res:
-            # open3d_vis_esdf_res_mos(esdf_residual, sample_data_token, nusc)
-            # open3d_vis_esdf_res_curr_mos_next(esdf_residual, sample_data_token, nusc)
-            open3d_vis_esdf_res_keyframes(esdf_residual, sample_data_token, nusc)
+    # Vis
+    if vis_esdf_res:
+        # open3d_vis_esdfres_point(esdf_residual, idx_tup, nusc)
+        open3d_vis_esdfres_mos(esdf_residual, idx_tup, nusc)
+        # open3d_vis_esdf_res_curr_mos_next(esdf_residual, sample_data_token, nusc)
+        # open3d_vis_esdf_res_keyframes(esdf_residual, sample_data_token, nusc)
+    if vis_esdf:
+        open3d_vis_esdf_mos(esdf_curr, sample_data_token, nusc)
+    if vis_esdf_histogram:
+        esdf_histogram(esdf_curr)
+    if vis_compare_resolution:
+        esdf_1_file = read_esdf(os.path.join(esdf_dir, str(seq_idx).zfill(4), "resolution-0.1",
+                                             "global_esdf_res_" + str(curr_frame_idx) + ".bin"))
+        esdf_2_file = read_esdf(os.path.join(esdf_dir, str(seq_idx).zfill(4), "resolution-0.2",
+                                             "global_esdf_res_" + str(curr_frame_idx) + ".bin"))
+        esdf_1 = np.fromfile(esdf_1_file, dtype=np.float32).reshape((-1, 4))
+        esdf_2 = np.fromfile(esdf_2_file, dtype=np.float32).reshape((-1, 4))
+        open3d_compare_resolution(esdf_1, esdf_2)
