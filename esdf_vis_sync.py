@@ -382,6 +382,7 @@ def open3d_vis_esdfres_mos(esdf_res, idx_tup, nusc):  # esdf residual + point cl
     esdf_pcd = o3d.geometry.PointCloud()
     esdf_pcd.points = o3d.utility.Vector3dVector(esdf_res[:, :3])
     esdf_pcd.colors = o3d.utility.Vector3dVector(esdf_res_color)
+
     voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(esdf_pcd, voxel_size=o3d_voxel_size)
     vis.add_geometry(voxel_grid)
     print("Vis ESDF Residual: seq %s, current frame %s, next frame %s\n" % (seq_idx, curr_frame_idx, next_frame_idx))
@@ -421,7 +422,7 @@ def open3d_vis_esdfres_mos(esdf_res, idx_tup, nusc):  # esdf residual + point cl
 
             vis.add_geometry(o3d_pts_mov)
             vis.add_geometry(o3d_pts_unk)
-            vis.add_geometry(o3d_pts_sta)
+            # vis.add_geometry(o3d_pts_sta)
 
             # vis_points = np.concatenate((points_w[mov_idx], points_w[unknown_idx]), axis=0)
             # vis_labels = np.concatenate((points_label[mov_idx], points_label[unknown_idx]), axis=0)
@@ -550,6 +551,45 @@ def open3d_vis_esdfres_keyframes(esdf_res, idx_tup, nusc):
     vis.run()
     vis.destroy_window()
 
+def open3d_vis_ogm_point(ogm, idx_tup, nusc):  # ogm + point cloud
+    # get sample data token from index tuple
+    (seq_idx, frame_idx, _) = idx_tup
+    sample_data_tok = sd_idx_to_tok_dict[(seq_idx, frame_idx)]
+
+    # create Open3D Vis
+    vis = o3d.visualization.Visualizer()
+    vis.create_window()
+
+    # integrate ogm voxel grid to open3d vis
+    ogm_pcd = o3d.geometry.PointCloud()
+    ogm_pcd.points = o3d.utility.Vector3dVector(ogm)
+    ogm_color = np.full_like(ogm, 0.6)
+    ogm_pcd.colors = o3d.utility.Vector3dVector(ogm_color)
+    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(ogm_pcd, voxel_size=o3d_voxel_size)
+    print("Vis OGM (Gray): seq %s, frame %s\n" % (seq_idx, frame_idx))
+
+    points_w, valid_points_idx = get_pcl_in_world_frame(nusc, sample_data_tok)
+    # integrate point cloud to open3d vis
+    pts = o3d.geometry.PointCloud()
+    pts.points = o3d.utility.Vector3dVector(points_w)
+    points_color = np.full_like(points_w, 0.2)
+    pts.colors = o3d.utility.Vector3dVector(points_color)
+    print("Vis Point Cloud (Black): seq %s, frame %s\n" % (seq_idx, frame_idx))
+
+    # add geometry to vis
+    vis.add_geometry(pts)
+    vis.add_geometry(voxel_grid)
+
+    # Vis Settings (render options & view control)
+    opt = vis.get_render_option()
+    opt.point_size = o3d_point_size
+    opt.background_color = np.asarray(o3d_background_color)
+    ctrl = vis.get_view_control()
+
+    # Vis Run
+    vis.run()
+    vis.destroy_window()
+
 def esdf_histogram(esdf):
     esdf_dis = esdf[:, -1].reshape((-1, 1))
     # n, bins, patches = plt.hist(x=esdf_dis, bins='auto', color='#0504aa', alpha=0.7, rwidth=0.85)
@@ -605,13 +645,22 @@ def open3d_compare_resolution(esdf_1, esdf_2):
     vis_1.destroy_window()
     vis_2.destroy_window()
 
+def cal_accumulated_3d_esdf(esdf):
+    map_z = 8  # meters
+    unique_xy, unique_inverse_idx = np.unique(esdf[:, :2], axis=0, return_inverse=True)
+    dist = esdf[:, -1].ravel()
+    dis_accumulate = np.bincount(unique_inverse_idx, weights=dist) / (map_z / o3d_voxel_size)  # average
+    z = np.zeros_like(dis_accumulate)  # all zeros
+    esdf_accu = np.concatenate((unique_xy, z.reshape(-1, 1), dis_accumulate.reshape(-1, 1)), axis=1)
+    return esdf_accu
+
 def cal_esdf_res(curr_frame_idx):
     print("No ESDF residual file or directory! Start computing ESDF residual:")
     surface_test = True
     if surface_test:
-        esdf_curr_file = os.path.join(esdf_dir, str(seq_idx).zfill(4), "3d_resolution-0.2", "global_esdf_" + str(curr_frame_idx) + ".bin")
-        esdf_next_file = os.path.join(esdf_dir, str(seq_idx).zfill(4), "3d_resolution-0.2", "global_esdf_" + str(curr_frame_idx + 1) + ".bin")
-        resolution_dir = os.path.join(esdf_res_dir, str(seq_idx).zfill(4), "3d_resolution-0.2")
+        esdf_curr_file = os.path.join(esdf_dir, str(seq_idx).zfill(4), "2d_accumulate_resolution-0.2", "global_esdf_" + str(curr_frame_idx) + ".bin")
+        esdf_next_file = os.path.join(esdf_dir, str(seq_idx).zfill(4), "2d_accumulate_resolution-0.2", "global_esdf_" + str(curr_frame_idx + 1) + ".bin")
+        resolution_dir = os.path.join(esdf_res_dir, str(seq_idx).zfill(4), "2d_accumulate_resolution-0.2")
         os.makedirs(resolution_dir, exist_ok=True)
     else:
         esdf_curr_file = os.path.join(esdf_dir, str(seq_idx).zfill(4), "resolution-" + str(o3d_voxel_size), "global_esdf_" + str(curr_frame_idx) + ".bin")
@@ -622,9 +671,12 @@ def cal_esdf_res(curr_frame_idx):
     esdf_curr = np.fromfile(esdf_curr_file, dtype=np.float32).reshape((-1, 4))
     esdf_next = np.fromfile(esdf_next_file, dtype=np.float32).reshape((-1, 4))
 
+    esdf_curr = np.float32(cal_accumulated_3d_esdf(esdf_curr))
+    esdf_next = np.float32(cal_accumulated_3d_esdf(esdf_next))
+
     esdf_next_voxels = esdf_next[:, :3]
     esdf_curr_voxels = esdf_curr[:, :3]
-    esdf_residual = np.zeros_like(esdf_next)  # dtype=np.float32
+    esdf_residual = np.zeros_like(esdf_next, dtype=np.float32)  # dtype=np.float32
 
     num_nan = 0
     warnings.filterwarnings("ignore")
@@ -664,6 +716,7 @@ def cal_esdf_res(curr_frame_idx):
 if __name__ == '__main__':
     # Switch
     vis_esdf_histogram = False
+    vis_ogm = True
     vis_esdf = False
     vis_esdf_res = True
     vis_compare_resolution = False
@@ -676,6 +729,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     esdf_dir = os.path.join(args.root_dir, "esdf")
     esdf_res_dir = os.path.join(args.root_dir, "esdf_res")
+    ogm_dir = os.path.join(args.root_dir, "ogm")
 
     if vis_esdf or vis_esdf_res or vis_compare_resolution:
         nusc = NuScenes(version=args.version, dataroot=args.root_dir, verbose=args.verbose)
@@ -692,21 +746,29 @@ if __name__ == '__main__':
         nusc = None
 
     # Loop Calculate Esdf Residual (Multi-processing)
-    if True:
+    if False:
         pool = multiprocessing.Pool(processes=16)
-        for curr_frame_idx in tqdm(range(4, 57)):
+        for curr_frame_idx in tqdm(range(10, 57)):
             pool.apply_async(func=cal_esdf_res, args=(curr_frame_idx,))
         pool.close()
         pool.join()
 
     # Visualization Only
-    curr_frame_idx = 10
+    curr_frame_idx = 1
     next_frame_idx = 11
     idx_tup = (seq_idx, curr_frame_idx, next_frame_idx)
+    if vis_ogm:
+        ogm_file = os.path.join(ogm_dir, str(seq_idx).zfill(4), "resolution-0.2", "global_ogm_" + str(curr_frame_idx) + ".bin")
+        ogm = np.fromfile(ogm_file, dtype=np.float32).reshape((-1, 3))
+        open3d_vis_ogm_point(ogm, idx_tup, nusc)
+
     try:  # load stored esdf residual file
         # residual_file = os.path.join(esdf_res_dir, str(seq_idx).zfill(4), "resolution-" + str(o3d_voxel_size), "global_esdf_res_" + str(next_frame_idx) + "-" + str(curr_frame_idx) + ".bin")
-        residual_file = os.path.join(esdf_res_dir, str(seq_idx).zfill(4), "surface_test", "global_esdf_res_" + str(next_frame_idx) + "-" + str(curr_frame_idx) + ".bin")
+        residual_file = os.path.join(esdf_res_dir, str(seq_idx).zfill(4), "resolution-0.2", "global_esdf_res_" + str(next_frame_idx) + "-" + str(curr_frame_idx) + ".bin")
         esdf_residual = np.fromfile(residual_file, dtype=np.float32).reshape((-1, 4))
+        esdfres = esdf_residual[:, -1].ravel()
+        esdfres_min = np.min(esdfres)
+        esdfres_max = np.max(esdfres)
         # not_nan_idx = np.argwhere(np.invert(np.isnan(esdf_residual[:, -1])))
     except IOError:
         esdf_residual = cal_esdf_res(curr_frame_idx)
@@ -714,8 +776,8 @@ if __name__ == '__main__':
     # Vis
     if vis_esdf_res:
         # open3d_vis_esdfres_point(esdf_residual, idx_tup, nusc)
-        # open3d_vis_esdfres_mos(esdf_residual, idx_tup, nusc)
-        open3d_vis_esdfres_keyframes(esdf_residual, idx_tup, nusc)
+        open3d_vis_esdfres_mos(esdf_residual, idx_tup, nusc)
+        # open3d_vis_esdfres_keyframes(esdf_residual, idx_tup, nusc)
     if vis_esdf:
         open3d_vis_esdf_mos(esdf_curr, sample_data_token, nusc)
     if vis_esdf_histogram:

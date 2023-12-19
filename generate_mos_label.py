@@ -134,9 +134,9 @@ def generate_mos_labels(sample, nusc):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate nuScenes lidar panaptic gt.')
-    parser.add_argument('--root_dir', type=str, default='/home/mars/MOS_Projects/nuScenes_MOS_Labeling/data',
+    parser.add_argument('--root_dir', type=str, default='/home/mars/MOS_Projects/nuScenes_MOS_Labeling/mini_data',
                         help='Default nuScenes data directory.')
-    parser.add_argument('--version', type=str, default='v1.0-trainval')
+    parser.add_argument('--version', type=str, default='v1.0-mini')
     parser.add_argument('--verbose', type=bool, default=True, help='Whether to print to stdout.')
     args = parser.parse_args()
 

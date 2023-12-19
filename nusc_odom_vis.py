@@ -39,6 +39,12 @@ def filter_far_points(points):
     valid_points_idx = np.squeeze(np.argwhere(points_dist <= max_dis))
     return valid_points_idx
 
+def filter_surface_points(points):
+    surface_height = -1.00
+    z = points[:, 2]
+    not_surface_idx = np.squeeze(np.argwhere(z > surface_height))
+    return not_surface_idx
+
 def get_pcl_in_world_frame(nusc, sample_data_token):
     sample_data = nusc.get('sample_data', sample_data_token)
     pcl_path = os.path.join(nusc.dataroot, sample_data['filename'])
@@ -47,6 +53,7 @@ def get_pcl_in_world_frame(nusc, sample_data_token):
 
     # filter points with distance > max distacne
     valid_points_idx = filter_far_points(points_l)
+    not_surface_idx = filter_surface_points(points_l)
 
     # odom pose: from vehicle to world
     pose_token = sample_data['ego_pose_token']
@@ -62,7 +69,7 @@ def get_pcl_in_world_frame(nusc, sample_data_token):
     T_l_2_w = T_v_2_w @ T_l_2_v
     points_l_homo = np.hstack([points_l, np.ones((points_l.shape[0], 1))]).T
     points_w = (T_l_2_w @ points_l_homo).T[:, :3]
-    return points_w, valid_points_idx
+    return points_w, not_surface_idx
 
 def o3d_vis_pcl(o3d_pcl_list):
     # open3d visualizer
@@ -144,14 +151,16 @@ if __name__ == '__main__':
 
     o3d_pcl_list = []
     for color_idx, pcl_tok in enumerate(nusc_pcl_tok_list):
-        points_w, valid_pts_idx = get_pcl_in_world_frame(nusc, pcl_tok)
+        points_w, not_surface_idx = get_pcl_in_world_frame(nusc, pcl_tok)
 
         o3d_pcl = o3d.geometry.PointCloud()
-        o3d_pcl.points = o3d.utility.Vector3dVector(points_w)
+        o3d_pcl.points = o3d.utility.Vector3dVector(points_w[not_surface_idx])
         color = coolwarm_colormap[color_idx]
         colors = np.full(points_w.shape, color)
-        o3d_pcl.colors = o3d.utility.Vector3dVector(colors)
+        o3d_pcl.colors = o3d.utility.Vector3dVector(colors[not_surface_idx])
 
         o3d_pcl_list.append(o3d_pcl)
+
+
 
     o3d_vis_pcl(o3d_pcl_list)
