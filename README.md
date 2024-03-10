@@ -3,38 +3,39 @@
 ### Step0: Download nuScenes Dataset on AutoDL Server
 download nuScenes dataset and **lidarseg** labels to local dataset directory: /root/autodl-tmp/data/nuscenes
 ```
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Test/v1.0-test_meta.tar /root/autodl-tmp/data/nuscenes
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Test/v1.0-test_blobs.tgz /root/autodl-tmp/data/nuscenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Test/v1.0-test_meta.tar /root/autodl-tmp/Datasets/nuScenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Test/v1.0-test_blobs.tgz /root/autodl-tmp/Datasets/nuScenes
 ------------------------------------------------------------------------------------------------------------------
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval_meta.tgz /root/autodl-tmp/data/nuscenes
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval01_blobs.tgz /root/autodl-tmp/data/nuscenes
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval02_blobs.tgz /root/autodl-tmp/data/nuscenes
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval03_blobs.tgz /root/autodl-tmp/data/nuscenes
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval04_blobs.tgz /root/autodl-tmp/data/nuscenes
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval05_blobs.tgz /root/autodl-tmp/data/nuscenes
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval06_blobs.tgz /root/autodl-tmp/data/nuscenes
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval07_blobs.tgz /root/autodl-tmp/data/nuscenes
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval08_blobs.tgz /root/autodl-tmp/data/nuscenes
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval09_blobs.tgz /root/autodl-tmp/data/nuscenes
-cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval10_blobs.tgz /root/autodl-tmp/data/nuscenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval_meta.tgz /root/autodl-tmp/Datasets/nuScenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval01_blobs.tgz /root/autodl-tmp/Datasets/nuScenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval02_blobs.tgz /root/autodl-tmp/Datasets/nuScenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval03_blobs.tgz /root/autodl-tmp/Datasets/nuScenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval04_blobs.tgz /root/autodl-tmp/Datasets/nuScenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval05_blobs.tgz /root/autodl-tmp/Datasets/nuScenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval06_blobs.tgz /root/autodl-tmp/Datasets/nuScenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval07_blobs.tgz /root/autodl-tmp/Datasets/nuScenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval08_blobs.tgz /root/autodl-tmp/Datasets/nuScenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval09_blobs.tgz /root/autodl-tmp/Datasets/nuScenes
+cp /root/autodl-pub/nuScenes/Fulldatasetv1.0/Trainval/v1.0-trainval10_blobs.tgz /root/autodl-tmp/Datasets/nuScenes
 ```
 
 decompress the .tar files.
 ```
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-test/v1.0-test_blobs.tgz -C /root/autodl-tmp/data/nuscenes
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-test/v1.0-test_meta.tar -C /root/autodl-tmp/data/nuscenes
+cd /root/autodl-tmp/Datasets/nuScenes
+tar -zxvf v1.0-test_blobs.tgz
+tar -zxvf v1.0-test_meta.tar
 ------------------------------------------------------------------------------------------------------------------
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-trainval_meta.tgz -C /root/autodl-tmp/data/nuscenes
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-trainval01_blobs.tgz -C /root/autodl-tmp/data/nuscenes
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-trainval02_blobs.tgz -C /root/autodl-tmp/data/nuscenes
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-trainval03_blobs.tgz -C /root/autodl-tmp/data/nuscenes
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-trainval04_blobs.tgz -C /root/autodl-tmp/data/nuscenes
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-trainval05_blobs.tgz -C /root/autodl-tmp/data/nuscenes
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-trainval06_blobs.tgz -C /root/autodl-tmp/data/nuscenes
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-trainval07_blobs.tgz -C /root/autodl-tmp/data/nuscenes
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-trainval08_blobs.tgz -C /root/autodl-tmp/data/nuscenes
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-trainval09_blobs.tgz -C /root/autodl-tmp/data/nuscenes
-tar zxvf /root/autodl-tmp/data/nuscenes/v1.0-trainval10_blobs.tgz -C /root/autodl-tmp/data/nuscenes
+tar -zxvf v1.0-trainval_meta.tgz
+tar -zxvf v1.0-trainval01_blobs.tgz
+tar -zxvf v1.0-trainval02_blobs.tgz
+tar -zxvf v1.0-trainval03_blobs.tgz
+tar -zxvf v1.0-trainval04_blobs.tgz
+tar -zxvf v1.0-trainval05_blobs.tgz
+tar -zxvf v1.0-trainval06_blobs.tgz
+tar -zxvf v1.0-trainval07_blobs.tgz
+tar -zxvf v1.0-trainval08_blobs.tgz
+tar -zxvf v1.0-trainval09_blobs.tgz
+tar -zxvf v1.0-trainval10_blobs.tgz
 ```
 
 ### Step1: Generate Velocities
